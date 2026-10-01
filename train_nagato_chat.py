@@ -280,11 +280,11 @@ def main() -> None:
 
     data_path = Path(args.data)
     val_data_path = Path(args.val_data)
-    anchor_data_path = Path(args.anchor_data)
-    expansion_data_path = Path(args.expansion_data)
-    completion_data_path = Path(args.completion_data)
-    paraphrase_data_path = Path(args.paraphrase_data)
-    consistency_data_path = Path(args.consistency_data)
+    anchor_data_path = Path(args.anchor_data) if args.anchor_data else None
+    expansion_data_path = Path(args.expansion_data) if args.expansion_data else None
+    completion_data_path = Path(args.completion_data) if args.completion_data else None
+    paraphrase_data_path = Path(args.paraphrase_data) if args.paraphrase_data else None
+    consistency_data_path = Path(args.consistency_data) if args.consistency_data else None
     tokenizer_path = Path(args.tokenizer)
     base_path = Path(args.base_model)
     output_path = Path(args.output)
@@ -302,11 +302,11 @@ def main() -> None:
 
     pairs = load_pairs(data_path)
     val_pairs = load_pairs(val_data_path)
-    anchor_pairs = load_pairs(anchor_data_path)
-    expansion_pairs = load_pairs(expansion_data_path)
-    completion_pairs = load_pairs(completion_data_path)
-    paraphrase_pairs = load_pairs(paraphrase_data_path)
-    consistency_pairs = load_pairs(consistency_data_path)
+    anchor_pairs = load_pairs(anchor_data_path) if anchor_data_path else []
+    expansion_pairs = load_pairs(expansion_data_path) if expansion_data_path else []
+    completion_pairs = load_pairs(completion_data_path) if completion_data_path else []
+    paraphrase_pairs = load_pairs(paraphrase_data_path) if paraphrase_data_path else []
+    consistency_pairs = load_pairs(consistency_data_path) if consistency_data_path else []
     train_pairs = list(pairs)
     random.shuffle(train_pairs)
 
