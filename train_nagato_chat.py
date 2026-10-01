@@ -65,7 +65,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--train-lm-head",
         action="store_true",
-        help="Also fine-tune the LM head. Off by default to reduce catastrophic forgetting.",
+        default=True,
+        help="Fine-tune the LM head with a lower learning rate.",
+    )
+    p.add_argument(
+        "--lm-head-learning-rate",
+        type=float,
+        default=1e-6,
+        help="Learning rate used only for the LM head.",
     )
     return p.parse_args()
 
@@ -279,9 +286,31 @@ def main() -> None:
         shuffle=False,
     )
 
+    main_params = []
+    lm_head_params = []
+
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        if name.startswith("lm_head."):
+            lm_head_params.append(parameter)
+        else:
+            main_params.append(parameter)
+
+    param_groups = []
+    if main_params:
+        param_groups.append({
+            "params": main_params,
+            "lr": args.learning_rate,
+        })
+    if lm_head_params:
+        param_groups.append({
+            "params": lm_head_params,
+            "lr": args.lm_head_learning_rate,
+        })
+
     optimizer = torch.optim.AdamW(
-        [p for p in model.parameters() if p.requires_grad],
-        lr=args.learning_rate,
+        param_groups,
         weight_decay=args.weight_decay,
     )
 
@@ -307,7 +336,8 @@ def main() -> None:
     print("Trainable blocks:", f"{first_trainable + 1}-{len(model.blocks)}")
     print("LM head train   :", args.train_lm_head)
     print("Context length  :", model.context_length)
-    print("Learning rate   :", args.learning_rate)
+    print("Block/Norm LR   :", args.learning_rate)
+    print("LM head LR      :", args.lm_head_learning_rate)
     print("Epoch limit     :", args.epochs)
     print()
 
