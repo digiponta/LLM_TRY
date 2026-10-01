@@ -43,8 +43,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--tokenizer", default="model/tokenizer-v0.7-bpe.json")
     p.add_argument("--base-model", default="model/model-llm-try-nagato.pt")
     p.add_argument("--output", default="model/model-llm-try-nagato-chat.pt")
-    p.add_argument("--epochs", type=int, default=8)
-    p.add_argument("--learning-rate", type=float, default=1e-5)
+    p.add_argument("--epochs", type=int, default=10)
+    p.add_argument("--learning-rate", type=float, default=5e-6)
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--validation-ratio", type=float, default=0.15)
     p.add_argument("--patience", type=int, default=3)
@@ -53,8 +53,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--repeat",
         type=int,
-        default=2,
+        default=1,
         help="Repeat each SFT pair this many times in training.",
+    )
+    p.add_argument(
+        "--trainable-blocks",
+        type=int,
+        default=2,
+        help="Number of final Transformer blocks to fine-tune. Embedding and LM head stay frozen by default.",
+    )
+    p.add_argument(
+        "--train-lm-head",
+        action="store_true",
+        help="Also fine-tune the LM head. Off by default to reduce catastrophic forgetting.",
     )
     return p.parse_args()
 
@@ -213,6 +224,30 @@ def main() -> None:
             f"{tokenizer.vocab_size} != {model.vocab_size}"
         )
 
+    # Small-data SFT: freeze most of the model to preserve the base language
+    # ability.  Only the final N Transformer blocks and final LayerNorm are
+    # adapted.  The LM head remains frozen unless explicitly requested.
+    for parameter in model.parameters():
+        parameter.requires_grad = False
+
+    trainable_blocks = max(1, min(args.trainable_blocks, len(model.blocks)))
+    first_trainable = len(model.blocks) - trainable_blocks
+
+    for block in model.blocks[first_trainable:]:
+        for parameter in block.parameters():
+            parameter.requires_grad = True
+
+    for parameter in model.final_norm.parameters():
+        parameter.requires_grad = True
+
+    if args.train_lm_head:
+        for parameter in model.lm_head.parameters():
+            parameter.requires_grad = True
+
+    trainable_parameters = sum(
+        p.numel() for p in model.parameters() if p.requires_grad
+    )
+
     val_count = max(1, int(round(len(pairs) * args.validation_ratio)))
     val_count = min(val_count, len(pairs) - 1)
 
@@ -248,7 +283,7 @@ def main() -> None:
     )
 
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        [p for p in model.parameters() if p.requires_grad],
         lr=args.learning_rate,
         weight_decay=args.weight_decay,
     )
@@ -270,6 +305,9 @@ def main() -> None:
     print("Base model      :", base_path)
     print("Base loss       :", checkpoint.get("loss"))
     print("Parameters      :", f"{model.parameter_count:,}")
+    print("Trainable params:", f"{trainable_parameters:,}")
+    print("Trainable blocks:", f"{first_trainable + 1}-{len(model.blocks)}")
+    print("LM head train   :", args.train_lm_head)
     print("Context length  :", model.context_length)
     print("Learning rate   :", args.learning_rate)
     print("Epoch limit     :", args.epochs)
