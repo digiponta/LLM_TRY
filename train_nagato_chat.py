@@ -39,10 +39,10 @@ SEED = 42
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Nagato-style conversational SFT for LLM_TRY.")
-    p.add_argument("--data", default="data/nagato_chat.jsonl")
+    p.add_argument("--data", default="data/nagato_canonical_v91.jsonl")
     p.add_argument("--tokenizer", default="model/tokenizer-v0.7-bpe.json")
     p.add_argument("--base-model", default="model/model-gpu-v0.8-chat-clean.pt")
-    p.add_argument("--output", default="model/model-llm-try-nagato-chat-cleanbase.pt")
+    p.add_argument("--output", default="model/model-llm-try-nagato-chat-v92.pt")
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--learning-rate", type=float, default=5e-6)
     p.add_argument("--batch-size", type=int, default=8)
