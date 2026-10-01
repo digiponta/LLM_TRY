@@ -41,12 +41,12 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Nagato-style conversational SFT for LLM_TRY.")
     p.add_argument("--data", default="data/nagato_chat.jsonl")
     p.add_argument("--tokenizer", default="model/tokenizer-v0.7-bpe.json")
-    p.add_argument("--base-model", default="model/model-llm-try-nagato.pt")
-    p.add_argument("--output", default="model/model-llm-try-nagato-chat.pt")
+    p.add_argument("--base-model", default="model/model-gpu-v0.8-chat-clean.pt")
+    p.add_argument("--output", default="model/model-llm-try-nagato-chat-cleanbase.pt")
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--learning-rate", type=float, default=5e-6)
     p.add_argument("--batch-size", type=int, default=8)
-    p.add_argument("--validation-ratio", type=float, default=0.15)
+    p.add_argument("--val-data", default="data/nagato_chat_val.jsonl")
     p.add_argument("--patience", type=int, default=3)
     p.add_argument("--weight-decay", type=float, default=0.01)
     p.add_argument("--grad-clip", type=float, default=1.0)
@@ -197,6 +197,7 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     data_path = Path(args.data)
+    val_data_path = Path(args.val_data)
     tokenizer_path = Path(args.tokenizer)
     base_path = Path(args.base_model)
     output_path = Path(args.output)
@@ -213,7 +214,9 @@ def main() -> None:
             raise FileNotFoundError(f"Base model not found: {base_path}")
 
     pairs = load_pairs(data_path)
-    random.shuffle(pairs)
+    val_pairs = load_pairs(val_data_path)
+    train_pairs = list(pairs)
+    random.shuffle(train_pairs)
 
     tokenizer = Tokenizer.load(str(tokenizer_path))
     model, checkpoint = LanguageModel.load_checkpoint(str(base_path), device=device)
@@ -247,12 +250,6 @@ def main() -> None:
     trainable_parameters = sum(
         p.numel() for p in model.parameters() if p.requires_grad
     )
-
-    val_count = max(1, int(round(len(pairs) * args.validation_ratio)))
-    val_count = min(val_count, len(pairs) - 1)
-
-    val_pairs = pairs[:val_count]
-    train_pairs = pairs[val_count:]
 
     repeated_train: List[Tuple[str, str]] = []
     for pair in train_pairs:
@@ -294,10 +291,11 @@ def main() -> None:
     print("Device          :", device)
     if device.type == "cuda":
         print("GPU             :", torch.cuda.get_device_name(0))
-    print("Data            :", data_path)
-    print("Unique pairs    :", len(pairs))
+    print("Train data      :", data_path)
+    print("Validation data :", val_data_path)
+    print("Unique train    :", len(pairs))
     print("Train pairs     :", len(train_pairs))
-    print("Validation pairs:", len(val_pairs))
+    print("Validation pairs:", len(val_pairs), "(independent paraphrases)")
     print("Repeat          :", args.repeat)
     print("Train rows      :", len(train_ds))
     print("Tokenizer       :", tokenizer_path)
