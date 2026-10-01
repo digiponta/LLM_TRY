@@ -61,6 +61,10 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Base repeat count for ordinary SFT pairs.",
     )
+    p.add_argument("--canonical-identity-weight", type=int, default=12)
+    p.add_argument("--canonical-persona-weight", type=int, default=6)
+    p.add_argument("--canonical-knowledge-weight", type=int, default=5)
+    p.add_argument("--canonical-paraphrase-weight", type=int, default=3)
     p.add_argument(
         "--persona-weight",
         type=int,
@@ -171,6 +175,37 @@ PERSONA_PATTERNS = (
     "今日はどう",
     "元気ですか",
 )
+
+
+IDENTITY_PATTERNS = (
+    "あなたは誰", "名前", "自己紹介",
+)
+
+KNOWLEDGE_PATTERNS = (
+    "AI", "人工知能", "LLM", "大規模言語モデル",
+    "コンピュータ", "GPU", "CUDA", "量子力学", "量子コンピュータ",
+    "Semantic", "セマンティック",
+)
+
+PARAPHRASE_PATTERNS = (
+    "って何", "について教えて", "簡単に説明", "知りたい",
+)
+
+def canonical_weight_for_pair(user: str, answer: str, args) -> int:
+    text = user.strip()
+
+    if any(p in text for p in IDENTITY_PATTERNS):
+        return max(1, args.canonical_identity_weight)
+
+    if is_persona_pair(text, answer):
+        return max(1, args.canonical_persona_weight)
+
+    if any(p in text for p in KNOWLEDGE_PATTERNS):
+        if any(p in text for p in PARAPHRASE_PATTERNS):
+            return max(1, args.canonical_paraphrase_weight)
+        return max(1, args.canonical_knowledge_weight)
+
+    return max(1, args.repeat)
 
 
 def is_persona_pair(user: str, answer: str) -> bool:
@@ -347,39 +382,57 @@ def main() -> None:
     persona_pairs = 0
     normal_pairs = 0
 
-    for user, answer in train_pairs:
-        if is_persona_pair(user, answer):
-            persona_pairs += 1
-            copies = max(1, args.repeat) * max(1, args.persona_weight)
-        else:
-            normal_pairs += 1
-            copies = max(1, args.repeat)
-        repeated_train.extend([(user, answer)] * copies)
+    canonical_mode = (
+        data_path.name == "nagato_canonical_v91.jsonl"
+        and not anchor_pairs
+        and not expansion_pairs
+        and not completion_pairs
+        and not paraphrase_pairs
+        and not consistency_pairs
+    )
 
-    for user, answer in anchor_pairs:
-        repeated_train.extend(
-            [(user, answer)] * max(1, args.anchor_weight)
-        )
+    if canonical_mode:
+        for user, answer in train_pairs:
+            copies = canonical_weight_for_pair(user, answer, args)
+            repeated_train.extend([(user, answer)] * copies)
+            if is_persona_pair(user, answer):
+                persona_pairs += 1
+            else:
+                normal_pairs += 1
+    else:
+        for user, answer in train_pairs:
+            if is_persona_pair(user, answer):
+                persona_pairs += 1
+                copies = max(1, args.repeat) * max(1, args.persona_weight)
+            else:
+                normal_pairs += 1
+                copies = max(1, args.repeat)
+            repeated_train.extend([(user, answer)] * copies)
 
-    for user, answer in expansion_pairs:
-        repeated_train.extend(
-            [(user, answer)] * max(1, args.expansion_weight)
-        )
+        for user, answer in anchor_pairs:
+            repeated_train.extend(
+                [(user, answer)] * max(1, args.anchor_weight)
+            )
 
-    for user, answer in completion_pairs:
-        repeated_train.extend(
-            [(user, answer)] * max(1, args.completion_weight)
-        )
+        for user, answer in expansion_pairs:
+            repeated_train.extend(
+                [(user, answer)] * max(1, args.expansion_weight)
+            )
 
-    for user, answer in paraphrase_pairs:
-        repeated_train.extend(
-            [(user, answer)] * max(1, args.paraphrase_weight)
-        )
+        for user, answer in completion_pairs:
+            repeated_train.extend(
+                [(user, answer)] * max(1, args.completion_weight)
+            )
 
-    for user, answer in consistency_pairs:
-        repeated_train.extend(
-            [(user, answer)] * max(1, args.consistency_weight)
-        )
+        for user, answer in paraphrase_pairs:
+            repeated_train.extend(
+                [(user, answer)] * max(1, args.paraphrase_weight)
+            )
+
+        for user, answer in consistency_pairs:
+            repeated_train.extend(
+                [(user, answer)] * max(1, args.consistency_weight)
+            )
 
     random.shuffle(repeated_train)
 
@@ -463,6 +516,15 @@ def main() -> None:
     print("Consistency weight:", args.consistency_weight)
     print("Persona pairs   :", persona_pairs)
     print("Normal pairs    :", normal_pairs)
+    print("Canonical mode   :", canonical_mode)
+    if canonical_mode:
+        print("Canonical weights: identity=%d persona=%d knowledge=%d paraphrase=%d general=%d" % (
+            args.canonical_identity_weight,
+            args.canonical_persona_weight,
+            args.canonical_knowledge_weight,
+            args.canonical_paraphrase_weight,
+            args.repeat,
+        ))
     print("Train rows      :", len(train_ds))
     print("Tokenizer       :", tokenizer_path)
     print("Vocabulary      :", tokenizer.vocab_size)
