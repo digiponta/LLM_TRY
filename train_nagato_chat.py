@@ -48,6 +48,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--val-data", default="data/nagato_chat_val.jsonl")
     p.add_argument("--anchor-data", default="data/nagato_identity_anchor.jsonl")
+    p.add_argument("--expansion-data", default="data/nagato_response_expansion.jsonl")
     p.add_argument("--patience", type=int, default=3)
     p.add_argument("--weight-decay", type=float, default=0.01)
     p.add_argument("--grad-clip", type=float, default=1.0)
@@ -68,6 +69,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=12,
         help="Repeat multiplier for identity-anchor/short-persona examples.",
+    )
+    p.add_argument(
+        "--expansion-weight",
+        type=int,
+        default=3,
+        help="Repeat multiplier for longer identity-preserving responses.",
     )
     p.add_argument(
         "--trainable-blocks",
@@ -253,6 +260,7 @@ def main() -> None:
     data_path = Path(args.data)
     val_data_path = Path(args.val_data)
     anchor_data_path = Path(args.anchor_data)
+    expansion_data_path = Path(args.expansion_data)
     tokenizer_path = Path(args.tokenizer)
     base_path = Path(args.base_model)
     output_path = Path(args.output)
@@ -271,6 +279,7 @@ def main() -> None:
     pairs = load_pairs(data_path)
     val_pairs = load_pairs(val_data_path)
     anchor_pairs = load_pairs(anchor_data_path)
+    expansion_pairs = load_pairs(expansion_data_path)
     train_pairs = list(pairs)
     random.shuffle(train_pairs)
 
@@ -323,6 +332,11 @@ def main() -> None:
     for user, answer in anchor_pairs:
         repeated_train.extend(
             [(user, answer)] * max(1, args.anchor_weight)
+        )
+
+    for user, answer in expansion_pairs:
+        repeated_train.extend(
+            [(user, answer)] * max(1, args.expansion_weight)
         )
 
     random.shuffle(repeated_train)
@@ -386,13 +400,16 @@ def main() -> None:
     print("Train data      :", data_path)
     print("Validation data :", val_data_path)
     print("Anchor data     :", anchor_data_path)
+    print("Expansion data  :", expansion_data_path)
     print("Unique train    :", len(pairs))
     print("Train pairs     :", len(train_pairs))
     print("Validation pairs:", len(val_pairs), "(independent paraphrases)")
     print("Anchor pairs    :", len(anchor_pairs))
+    print("Expansion pairs :", len(expansion_pairs))
     print("Base repeat     :", args.repeat)
     print("Persona weight  :", args.persona_weight)
     print("Anchor weight   :", args.anchor_weight)
+    print("Expansion weight:", args.expansion_weight)
     print("Persona pairs   :", persona_pairs)
     print("Normal pairs    :", normal_pairs)
     print("Train rows      :", len(train_ds))
