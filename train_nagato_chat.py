@@ -50,6 +50,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--anchor-data", default="data/nagato_identity_anchor.jsonl")
     p.add_argument("--expansion-data", default="data/nagato_response_expansion.jsonl")
     p.add_argument("--completion-data", default="data/nagato_response_completion.jsonl")
+    p.add_argument("--paraphrase-data", default="data/nagato_paraphrase_generalization.jsonl")
     p.add_argument("--patience", type=int, default=3)
     p.add_argument("--weight-decay", type=float, default=0.01)
     p.add_argument("--grad-clip", type=float, default=1.0)
@@ -82,6 +83,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=5,
         help="Repeat multiplier for complete knowledge responses to resist premature EOS.",
+    )
+    p.add_argument(
+        "--paraphrase-weight",
+        type=int,
+        default=3,
+        help="Repeat multiplier for paraphrase generalization examples.",
     )
     p.add_argument(
         "--trainable-blocks",
@@ -269,6 +276,7 @@ def main() -> None:
     anchor_data_path = Path(args.anchor_data)
     expansion_data_path = Path(args.expansion_data)
     completion_data_path = Path(args.completion_data)
+    paraphrase_data_path = Path(args.paraphrase_data)
     tokenizer_path = Path(args.tokenizer)
     base_path = Path(args.base_model)
     output_path = Path(args.output)
@@ -289,6 +297,7 @@ def main() -> None:
     anchor_pairs = load_pairs(anchor_data_path)
     expansion_pairs = load_pairs(expansion_data_path)
     completion_pairs = load_pairs(completion_data_path)
+    paraphrase_pairs = load_pairs(paraphrase_data_path)
     train_pairs = list(pairs)
     random.shuffle(train_pairs)
 
@@ -351,6 +360,11 @@ def main() -> None:
     for user, answer in completion_pairs:
         repeated_train.extend(
             [(user, answer)] * max(1, args.completion_weight)
+        )
+
+    for user, answer in paraphrase_pairs:
+        repeated_train.extend(
+            [(user, answer)] * max(1, args.paraphrase_weight)
         )
 
     random.shuffle(repeated_train)
@@ -416,17 +430,20 @@ def main() -> None:
     print("Anchor data     :", anchor_data_path)
     print("Expansion data  :", expansion_data_path)
     print("Completion data :", completion_data_path)
+    print("Paraphrase data :", paraphrase_data_path)
     print("Unique train    :", len(pairs))
     print("Train pairs     :", len(train_pairs))
     print("Validation pairs:", len(val_pairs), "(independent paraphrases)")
     print("Anchor pairs    :", len(anchor_pairs))
     print("Expansion pairs :", len(expansion_pairs))
     print("Completion pairs:", len(completion_pairs))
+    print("Paraphrase pairs:", len(paraphrase_pairs))
     print("Base repeat     :", args.repeat)
     print("Persona weight  :", args.persona_weight)
     print("Anchor weight   :", args.anchor_weight)
     print("Expansion weight:", args.expansion_weight)
     print("Completion weight:", args.completion_weight)
+    print("Paraphrase weight:", args.paraphrase_weight)
     print("Persona pairs   :", persona_pairs)
     print("Normal pairs    :", normal_pairs)
     print("Train rows      :", len(train_ds))
