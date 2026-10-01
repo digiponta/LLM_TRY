@@ -54,7 +54,13 @@ def parse_args() -> argparse.Namespace:
         "--repeat",
         type=int,
         default=1,
-        help="Repeat each SFT pair this many times in training.",
+        help="Base repeat count for ordinary SFT pairs.",
+    )
+    p.add_argument(
+        "--persona-weight",
+        type=int,
+        default=6,
+        help="Repeat multiplier for persona/style examples.",
     )
     p.add_argument(
         "--trainable-blocks",
@@ -108,6 +114,40 @@ def load_pairs(path: Path) -> List[Tuple[str, str]]:
         raise ValueError("At least 2 unique SFT pairs are required.")
 
     return pairs
+
+
+PERSONA_PATTERNS = (
+    "あなたは誰",
+    "自己紹介",
+    "名前",
+    "本は好き",
+    "読書",
+    "人間について",
+    "人について",
+    "感情",
+    "怒って",
+    "楽しい",
+    "寂しい",
+    "好きな場所",
+    "好きな時間",
+    "学校は",
+    "勉強は好き",
+    "何をしていますか",
+    "今日はどう",
+    "元気ですか",
+)
+
+
+def is_persona_pair(user: str, answer: str) -> bool:
+    text = user.strip()
+    if any(pattern in text for pattern in PERSONA_PATTERNS):
+        return True
+
+    # Identity marker in the target answer is always persona-relevant.
+    if "長門有希" in answer:
+        return True
+
+    return False
 
 
 class ConversationDataset(Dataset):
@@ -259,8 +299,18 @@ def main() -> None:
     )
 
     repeated_train: List[Tuple[str, str]] = []
-    for pair in train_pairs:
-        repeated_train.extend([pair] * max(1, args.repeat))
+    persona_pairs = 0
+    normal_pairs = 0
+
+    for user, answer in train_pairs:
+        if is_persona_pair(user, answer):
+            persona_pairs += 1
+            copies = max(1, args.repeat) * max(1, args.persona_weight)
+        else:
+            normal_pairs += 1
+            copies = max(1, args.repeat)
+
+        repeated_train.extend([(user, answer)] * copies)
 
     random.shuffle(repeated_train)
 
@@ -325,7 +375,10 @@ def main() -> None:
     print("Unique train    :", len(pairs))
     print("Train pairs     :", len(train_pairs))
     print("Validation pairs:", len(val_pairs), "(independent paraphrases)")
-    print("Repeat          :", args.repeat)
+    print("Base repeat     :", args.repeat)
+    print("Persona weight  :", args.persona_weight)
+    print("Persona pairs   :", persona_pairs)
+    print("Normal pairs    :", normal_pairs)
     print("Train rows      :", len(train_ds))
     print("Tokenizer       :", tokenizer_path)
     print("Vocabulary      :", tokenizer.vocab_size)
