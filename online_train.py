@@ -124,8 +124,8 @@ def deduplicate_trusted_rows(
     priority = {
         "chat-approved": 1,
         "chat-manual": 2,
-        "chat-fact": 2,
-        "chat-recovery": 3,
+        "chat-fact": 3,
+        "chat-recovery": 4,
     }
     selected: dict[str, Tuple[str, str, str]] = {}
 
