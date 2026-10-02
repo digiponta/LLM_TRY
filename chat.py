@@ -2080,6 +2080,19 @@ def extract_bare_concept_focus(question: str) -> str:
     return ""
 
 
+def is_definition_query(question: str) -> bool:
+    """Return True for narrow definition requests.
+
+    Relation facts must not override a learned/base definition for forms
+    such as "Xとは" or "Xって何".
+    """
+    q = question.strip()
+    return bool(
+        re.fullmatch(r".+?とは", q)
+        or re.fullmatch(r".+?って何", q)
+    )
+
+
 def extract_concept_query_focus(question: str) -> str:
     """Extract a concept from the explicit query forms used by the pre-gate."""
     q = question.strip()
@@ -2460,7 +2473,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.7.2 Relation-Aware Fact Parsing")
+    print(" LLM_TRY Chat - v10.7.3 Intent-Aware Fact Routing")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2886,6 +2899,11 @@ def main() -> None:
                 learning_state,
                 fact_focus,
             )
+            if is_definition_query(user_text):
+                fact_rows = [
+                    fact for fact in fact_rows
+                    if fact.get("relation") == "is"
+                ]
             if len(fact_rows) >= 1:
                 composed = compose_context_fact_answer(fact_focus, fact_rows)
                 print(f"AI> {composed}")
