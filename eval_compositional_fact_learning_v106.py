@@ -19,7 +19,7 @@ from chat import (
 
 def main() -> None:
     print("=" * 92)
-    print(" LLM_TRY v10.6 Compositional Fact Learning Regression")
+    print(" LLM_TRY v10.6.2 Single/Multi Fact Retrieval Regression")
     print("=" * 92)
 
     passed = 0
@@ -83,6 +83,11 @@ def main() -> None:
             "single-fact-compose",
             compose_fact_answer("X", values) == "Xは、Yである。",
             compose_fact_answer("X", values),
+        )
+        check(
+            "single-fact-runtime-eligible",
+            len(values) >= 1,
+            f"trained_fact_count={len(values)}",
         )
 
         state.write_text(
