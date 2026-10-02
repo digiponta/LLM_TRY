@@ -49,7 +49,7 @@ DEFAULT_GATE_REVIEW_QUEUE = "data/gate_review_queue.jsonl"
 DEFAULT_ONLINE_MODEL = "model/model-gpu-v1.6.2-online.pt"
 DEFAULT_ONLINE_TRAINER = "online_train.py"
 DEFAULT_RAW_KNOWLEDGE_CORPUS = "data/data-nagato.txt"
-DEFAULT_SEMANTIC_KNOWLEDGE = "data/unified_semantic_memory_v1090.jsonl"
+DEFAULT_SEMANTIC_KNOWLEDGE = "data/unified_semantic_memory_v1091.jsonl"
 
 USER_PREFIX = "人: "
 AI_PREFIX = "AI: "
