@@ -672,7 +672,7 @@ def trained_known_concepts(
             continue
 
         source = str(row.get("source", ""))
-        if source not in ("chat-manual", "chat-approved", "chat-recovery"):
+        if source not in ("chat-manual", "chat-approved", "chat-recovery", "chat-fact"):
             continue
 
         user = str(row.get("user", "")).strip()
