@@ -10,9 +10,12 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
+from pathlib import Path
+
+from chat import trained_known_concepts
 
 
-SEQUENCE = [
+BASE_SEQUENCE = [
     ("あなたは誰ですか", True),
     ("名前を教えてください", True),
     ("自己紹介してください", True),
@@ -20,14 +23,13 @@ SEQUENCE = [
     ("LLMって何", True),
     ("CUDAとは", True),
     ("量子力学とは", True),
-    ("宇宙とは", False),
 ]
 
 
-def run_session(model: str) -> str:
+def run_session(model: str, sequence: list[tuple[str, bool]]) -> str:
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
-    payload = "\n".join(q for q, _ in SEQUENCE) + "\nexit\n"
+    payload = "\n".join(q for q, _ in sequence) + "\nexit\n"
 
     proc = subprocess.run(
         [
@@ -64,25 +66,32 @@ def main() -> None:
     p.add_argument("--model", default="model/model-llm-try-nagato-chat-v94.pt")
     args = p.parse_args()
 
-    out = run_session(args.model)
+    promoted = trained_known_concepts(
+        Path("data/chat_history.jsonl"),
+        Path("data/chat_learning_state.json"),
+    )
+    sequence = list(BASE_SEQUENCE)
+    sequence.append(("宇宙とは", "宇宙" in promoted))
+
+    out = run_session(args.model, sequence)
     answers = extract_answers(out)
 
     print("=" * 92)
-    print(" LLM_TRY v10.1 Multi-turn History Contamination Regression")
+    print(" LLM_TRY v10.5.2 Adaptive Multi-turn History Regression")
     print("=" * 92)
     print("Model:", args.model)
     print()
 
     passed = 0
-    if len(answers) != len(SEQUENCE):
-        print(f"[FAIL] parsed answers: expected={len(SEQUENCE)} actual={len(answers)}")
+    if len(answers) != len(sequence):
+        print(f"[FAIL] parsed answers: expected={len(sequence)} actual={len(answers)}")
     else:
-        for (q, should_be_known), ans in zip(SEQUENCE, answers):
+        for (q, should_be_known), ans in zip(sequence, answers):
             ok = (ans != "未学習です") if should_be_known else (ans == "未学習です")
             passed += int(ok)
             print(f"[{'PASS' if ok else 'FAIL'}] {q} -> {ans or '<EMPTY>'}")
 
-    total = len(SEQUENCE)
+    total = len(sequence)
     print()
     print("Summary")
     print("-" * 92)
