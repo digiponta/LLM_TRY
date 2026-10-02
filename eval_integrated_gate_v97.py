@@ -15,6 +15,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from chat import extract_concept_query_focus, trained_known_concepts
+
 KNOWN = [
     "あなたは誰ですか",
     "名前を教えてください",
@@ -93,14 +95,28 @@ def main() -> None:
     )
     args = p.parse_args()
 
-    unknown = load_unknown(Path(args.unknown_data))
+    unknown_all = load_unknown(Path(args.unknown_data))
+    promoted = trained_known_concepts(
+        Path("data/chat_history.jsonl"),
+        Path("data/chat_learning_state.json"),
+    )
+
+    unknown = []
+    promoted_unknown = []
+    for q in unknown_all:
+        focus = extract_concept_query_focus(q)
+        if focus and focus.lower() in promoted:
+            promoted_unknown.append(q)
+        else:
+            unknown.append(q)
 
     print("=" * 92)
-    print(" LLM_TRY v9.7 Integrated Known/Unknown Regression")
+    print(" LLM_TRY v10.5.2 Adaptive-State-Aware Known/Unknown Regression")
     print("=" * 92)
     print("Model          :", args.model)
     print("Known prompts  :", len(KNOWN))
     print("Unknown prompts:", len(unknown))
+    print("Promoted/skipped:", len(promoted_unknown))
     print()
 
     known_ok = 0
@@ -152,6 +168,7 @@ def main() -> None:
     print("-" * 92)
     print(f"Known preservation : {known_ok}/{len(KNOWN)} = {known_rate*100:.1f}%")
     print(f"Unknown rejection  : {unknown_ok}/{len(unknown)} = {unknown_rate*100:.1f}%")
+    print(f"Promoted/skipped   : {len(promoted_unknown)}")
     print(f"Balanced accuracy  : {balanced*100:.1f}%")
     print(f"Parse failures     : {parse_fail}")
 
