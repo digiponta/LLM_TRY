@@ -1,3 +1,105 @@
+# LLM_TRY v10.5.2 — Stable Adaptive Learning Release
+
+**Status: Stable candidate verified by full regression (10/10 PASS).**
+
+LLM_TRY v10.5.2 is the current stable experimental release of the LLM_TRY line.
+It extends the original Known/Unknown gate with persistent, human-supervised
+incremental learning while preserving established knowledge.
+
+## Stable v10.5.2 Highlights
+
+~~~text
+Unknown concept
+    -> pre-generation rejection
+    -> knowledge queue
+    -> explicit /teach or /teachq
+    -> /train
+    -> single-pair or multi-concept incremental GPU training
+    -> trained-concept promotion
+    -> persistent adaptive checkpoint
+    -> restart-safe learned knowledge
+~~~
+
+The adaptive path also includes:
+
+- **Stability Replay** to reduce catastrophic forgetting;
+- **quality-aware checkpoint selection** using strict regression pass plus teacher-answer fidelity;
+- **Bare Concept Gate** for short inputs such as `CUDA`, `宇宙`, or `ブラックホール`;
+- **adaptive-state-aware regression**, so trained concepts are not permanently treated as unknown.
+
+### Verified adaptive model
+
+~~~text
+Tokenizer       : byte-level BPE
+Vocabulary size : 8,000
+Parameters      : 8,960,000
+Context length  : 512
+d_model         : 256
+Transformer     : 6 layers
+Attention heads : 8
+GPU tested      : NVIDIA GeForce RTX 3070 Ti
+Base checkpoint : model/model-llm-try-nagato-chat-v94.pt
+Adaptive model  : model/model-gpu-v1.6.2-online.pt
+~~~
+
+### Verified learned / preserved behavior
+
+Stable baseline: 長門有希 persona, AI, LLM, CUDA, 量子力学.
+
+Incrementally learned: 宇宙, 数学, 文学.
+
+Still rejected when untrained: ブラックホール, 相対性理論, 化学.
+
+### Full stable regression
+
+Run:
+
+~~~powershell
+python run_full_regression_v1051.py
+~~~
+
+Verified result:
+
+~~~text
+[PASS] known-false-rejection-v96
+[PASS] integrated-known-unknown-v97
+[PASS] multiturn-history-v101
+[PASS] unknown-teaching-loop-v102
+[PASS] trained-concept-promotion-v1021
+[PASS] concept-query-promotion-v1022
+[PASS] single-pair-training-gate-v1023
+[PASS] persistent-checkpoint-v1024
+[PASS] multiconcept-incremental-v104
+[PASS] bare-concept-gate-v105
+
+Passed            : 10/10
+Failed            : 0/10
+Stable candidate : PASS
+~~~
+
+This is a controlled project regression suite, not a claim of general-purpose LLM accuracy.
+
+### Recommended workflow
+
+~~~powershell
+python run_full_regression_v1051.py
+python chat.py
+~~~
+
+For a new concept:
+
+~~~text
+<ask unknown concept>
+/teach <trusted answer>
+/train
+<ask again>
+~~~
+
+The trained concept becomes eligible for KNOWN routing only after the trusted pair is actually consumed by incremental training.
+
+See `RELEASE_NOTES_v10.5.2.md` for the stable-release summary.
+
+---
 # LLM_TRY v10.0 — Canonical SFT + Known/Unknown Gate
 
 LLM_TRY is an experimental branch derived from the LLM_GPU conversational model.
