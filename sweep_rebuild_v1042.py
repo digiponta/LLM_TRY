@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+from difflib import SequenceMatcher
 from pathlib import Path
 import shutil
 import subprocess
@@ -46,6 +47,40 @@ LEARNED = [
     "数学とは",
     "文学とは",
 ]
+
+
+def normalize_text(text: str) -> str:
+    return "".join(text.strip().split())
+
+
+def load_expected_learned(path: Path) -> dict[str, str]:
+    expected: dict[str, str] = {}
+    if not path.exists():
+        return expected
+    targets = set(LEARNED)
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        user = str(row.get("user", "")).strip()
+        answer = str(row.get("assistant", "")).strip()
+        source = str(row.get("source", ""))
+        if user in targets and answer and source in (
+            "chat-manual", "chat-approved", "chat-recovery"
+        ):
+            expected[user] = answer
+    return expected
+
+
+def answer_fidelity(actual: str, expected: str) -> float:
+    a = normalize_text(actual)
+    e = normalize_text(expected)
+    if not a or not e:
+        return 0.0
+    return SequenceMatcher(None, a, e).ratio()
 
 UNKNOWN = [
     "ブラックホールとは",
@@ -102,7 +137,7 @@ def write_empty_state(path: Path) -> None:
     )
 
 
-def evaluate(model: Path) -> dict:
+def evaluate(model: Path, expected_learned: dict[str, str]) -> dict:
     baseline_ok = 0
     learned_ok = 0
     unknown_ok = 0
@@ -114,11 +149,18 @@ def evaluate(model: Path) -> dict:
         baseline_ok += int(ok)
         details.append(f"BASE {'PASS' if ok else 'FAIL'} {q} -> {ans}")
 
+    learned_fidelities: list[float] = []
     for q in LEARNED:
         ans, gate = run_chat(model, q)
         ok = bool(ans) and ans != "未学習です" and "gate=KNOWN" in gate
         learned_ok += int(ok)
-        details.append(f"LEARN {'PASS' if ok else 'FAIL'} {q} -> {ans}")
+        expected = expected_learned.get(q, "")
+        fidelity = answer_fidelity(ans, expected) if expected else (1.0 if ok else 0.0)
+        learned_fidelities.append(fidelity)
+        details.append(
+            f"LEARN {'PASS' if ok else 'FAIL'} {q} -> {ans} "
+            f"[fidelity={fidelity:.3f}]"
+        )
 
     for q in UNKNOWN:
         ans, gate = run_chat(model, q)
@@ -138,13 +180,17 @@ def evaluate(model: Path) -> dict:
         "unknown": unknown_ok,
         "total": total,
         "strict_pass": strict_pass,
+        "learned_fidelity": (
+            sum(learned_fidelities) / len(learned_fidelities)
+            if learned_fidelities else 0.0
+        ),
         "details": details,
     }
 
 
 def main() -> None:
     print("=" * 96)
-    print(" LLM_TRY v10.4.2 Balanced Adaptive Rebuild Sweep")
+    print(" LLM_TRY v10.4.3 Quality-Aware Adaptive Rebuild Sweep")
     print("=" * 96)
 
     required = [BASE_MODEL, CHAT_LOG, TOKENIZER, STABILITY]
@@ -161,6 +207,12 @@ def main() -> None:
         shutil.copy2(STATE, backup_dir / STATE.name)
 
     WORK.mkdir(parents=True, exist_ok=True)
+    expected_learned = load_expected_learned(CHAT_LOG)
+    missing_expected = [q for q in LEARNED if q not in expected_learned]
+    if missing_expected:
+        raise RuntimeError(
+            "Missing trusted teacher answer(s) for: " + ", ".join(missing_expected)
+        )
     results = []
 
     for index, cfg in enumerate(CONFIGS, 1):
@@ -197,13 +249,14 @@ def main() -> None:
             print(f"[TRAIN FAIL] exit={proc.returncode}")
             continue
 
-        score = evaluate(candidate)
+        score = evaluate(candidate, expected_learned)
         results.append((index, cfg, candidate, score))
         print(
             f"[EVAL] baseline={score['baseline']}/{len(BASELINE)} "
             f"learned={score['learned']}/{len(LEARNED)} "
             f"unknown={score['unknown']}/{len(UNKNOWN)} "
             f"total={score['total']}/{len(BASELINE)+len(LEARNED)+len(UNKNOWN)} "
+            f"fidelity={score['learned_fidelity']:.3f} "
             f"strict={'PASS' if score['strict_pass'] else 'FAIL'}"
         )
         for line in score["details"]:
@@ -213,22 +266,24 @@ def main() -> None:
     if not valid:
         raise RuntimeError("No candidate completed training/evaluation.")
 
-    # Prefer strict pass. Otherwise maximize learned retention first while
-    # requiring baseline/unknown preservation as much as possible.
+    # Prefer strict pass, then maximize teacher-answer fidelity. If several
+    # candidates are equally faithful, prefer stronger stability replay and
+    # lower manual weight to reduce unnecessary plasticity.
     strict = [row for row in valid if row[3]["strict_pass"]]
-    if strict:
-        best = strict[0]
-    else:
-        best = max(
-            valid,
-            key=lambda row: (
-                row[3]["total"],
-                row[3]["learned"],
-                row[3]["baseline"],
-                row[3]["unknown"],
-                -row[0],
-            ),
-        )
+    pool = strict if strict else valid
+    best = max(
+        pool,
+        key=lambda row: (
+            row[3]["total"],
+            row[3]["learned_fidelity"],
+            row[3]["baseline"],
+            row[3]["unknown"],
+            row[1]["stability_weight"],
+            -row[1]["manual_weight"],
+            -float(row[1]["lr"]),
+            -row[0],
+        ),
+    )
 
     index, cfg, candidate, score = best
     assert candidate is not None and score is not None
@@ -249,6 +304,7 @@ def main() -> None:
         f"{score['total']}/{len(BASELINE)+len(LEARNED)+len(UNKNOWN)}",
     )
     print("Strict pass      :", score["strict_pass"])
+    print("Learned fidelity :", f"{score['learned_fidelity']:.3f}")
     print("Installed model  :", ONLINE_MODEL)
     print("Installed state  :", STATE)
     print("Backup           :", backup_dir)
