@@ -421,6 +421,31 @@ def parse_subject_fact(answer: str) -> dict[str, str] | None:
     condition = (m_cond.group(1) or "").strip()
     body = m_cond.group(2).strip()
 
+    # Verb relations: Xは[context,]Yを含む / Yに属する / Yを持つ / Yに使われる
+    verb_patterns = (
+        ("includes", r"^([^\s。、！？?]{1,32})は、?(?:(.+?上)[、,]?)?(.+?)を含む$"),
+        ("belongs_to", r"^([^\s。、！？?]{1,32})は、?(?:(.+?上)[、,]?)?(.+?)に属する$"),
+        ("has", r"^([^\s。、！？?]{1,32})は、?(?:(.+?上)[、,]?)?(.+?)を持つ$"),
+        ("used_for", r"^([^\s。、！？?]{1,32})は、?(?:(.+?上)[、,]?)?(.+?)に(?:使われる|利用される)$"),
+    )
+    for relation, pattern in verb_patterns:
+        m_verb = re.fullmatch(pattern, body)
+        if m_verb:
+            subject = m_verb.group(1).strip()
+            relation_context = (m_verb.group(2) or "").strip(" 、,")
+            value = m_verb.group(3).strip(" 、,")
+            if subject and value:
+                cond = normalize_condition(condition)
+                return {
+                    "subject": subject,
+                    "relation": relation,
+                    "value": value,
+                    "condition": condition,
+                    "condition_predicate": str(cond["predicate"]),
+                    "condition_polarity": bool(cond["polarity"]),
+                    "relation_context": relation_context,
+                }
+
     # Attribute relation: XのRはVである/です
     m_attr = re.fullmatch(
         r"^([^\s。、！？?]{1,32})の([^\s。、！？?]{1,24})は、?(.+?)(?:である|です)$",
@@ -479,6 +504,7 @@ def append_fact_store(
     condition = parsed["condition"]
     condition_predicate = str(parsed.get("condition_predicate", ""))
     condition_polarity = bool(parsed.get("condition_polarity", True))
+    relation_context = str(parsed.get("relation_context", ""))
     fp = pair_fingerprint(question, answer)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -516,6 +542,7 @@ def append_fact_store(
         "condition": condition,
         "condition_predicate": condition_predicate,
         "condition_polarity": condition_polarity,
+        "relation_context": relation_context,
         "question": question,
         "answer": answer,
         "fingerprint": fp,
@@ -572,6 +599,7 @@ def trained_facts(
             "condition": condition,
             "condition_predicate": str(row.get("condition_predicate", cond["predicate"])).strip(),
             "condition_polarity": bool(row.get("condition_polarity", cond["polarity"])),
+            "relation_context": str(row.get("relation_context", "")).strip(),
         }
         key = (
             fact["relation"].lower(),
@@ -624,8 +652,19 @@ def compose_context_fact_answer(subject: str, facts: list[dict[str, str]]) -> st
         value = fact["value"]
         condition = fact["condition"]
 
+        relation_context = str(fact.get("relation_context", "")).strip()
+        context_prefix = f"{relation_context}、" if relation_context else ""
+
         if relation == "is":
             body = f"{subject}は{value}である"
+        elif relation == "includes":
+            body = f"{subject}は、{context_prefix}{value}を含む"
+        elif relation == "belongs_to":
+            body = f"{subject}は、{context_prefix}{value}に属する"
+        elif relation == "has":
+            body = f"{subject}は、{context_prefix}{value}を持つ"
+        elif relation == "used_for":
+            body = f"{subject}は、{context_prefix}{value}に利用される"
         else:
             body = f"{subject}の{relation}は{value}である"
 
@@ -2421,7 +2460,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.7.1 Condition Polarity Logic")
+    print(" LLM_TRY Chat - v10.7.2 Relation-Aware Fact Parsing")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
