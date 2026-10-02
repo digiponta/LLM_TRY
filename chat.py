@@ -421,6 +421,26 @@ def parse_subject_fact(answer: str) -> dict[str, str] | None:
     condition = (m_cond.group(1) or "").strip()
     body = m_cond.group(2).strip()
 
+    # Explicit definition relation: Xとは、Y
+    m_def = re.fullmatch(
+        r"^([^\s。、！？?]{1,32})とは、?(.+)$",
+        body,
+    )
+    if m_def:
+        subject = m_def.group(1).strip()
+        value = m_def.group(2).strip(" 、,")
+        if subject and value:
+            cond = normalize_condition(condition)
+            return {
+                "subject": subject,
+                "relation": "definition",
+                "value": value,
+                "condition": condition,
+                "condition_predicate": str(cond["predicate"]),
+                "condition_polarity": bool(cond["polarity"]),
+                "relation_context": "",
+            }
+
     # Verb relations: Xは[context,]Yを含む / Yに属する / Yを持つ / Yに使われる
     verb_patterns = (
         ("includes", r"^([^\s。、！？?]{1,32})は、?(?:(.+?上)[、,]?)?(.+?)を含む$"),
@@ -655,7 +675,9 @@ def compose_context_fact_answer(subject: str, facts: list[dict[str, str]]) -> st
         relation_context = str(fact.get("relation_context", "")).strip()
         context_prefix = f"{relation_context}、" if relation_context else ""
 
-        if relation == "is":
+        if relation == "definition":
+            body = f"{subject}とは、{value}"
+        elif relation == "is":
             body = f"{subject}は{value}である"
         elif relation == "includes":
             body = f"{subject}は、{context_prefix}{value}を含む"
@@ -2473,7 +2495,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.7.3 Intent-Aware Fact Routing")
+    print(" LLM_TRY Chat - v10.7.4 Definition Fact Separation")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2902,7 +2924,7 @@ def main() -> None:
             if is_definition_query(user_text):
                 fact_rows = [
                     fact for fact in fact_rows
-                    if fact.get("relation") == "is"
+                    if fact.get("relation") in ("definition", "is")
                 ]
             if len(fact_rows) >= 1:
                 composed = compose_context_fact_answer(fact_focus, fact_rows)
