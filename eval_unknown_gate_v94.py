@@ -89,7 +89,7 @@ def main():
     unknown = load_unknown(Path(args.unknown_data))
 
     print("=" * 80)
-    print(" LLM_TRY v9.4 Gate-based Unknown Paraphrase Benchmark")
+    print(" LLM_TRY v9.5 Pre-generation Unknown Concept Gate Benchmark")
     print("=" * 80)
     print("Model        :", args.model)
     print("Known prompts:", len(KNOWN))
