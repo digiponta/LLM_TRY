@@ -1,3 +1,175 @@
+# LLM_TRY v10.0 — Canonical SFT + Known/Unknown Gate
+
+LLM_TRY is an experimental branch derived from the LLM_GPU conversational model.
+The v9.x series focused on a compact Nagato-style assistant and on separating
+**knowledge generation** from **unknown-concept rejection**.
+
+## v10.0 Stable Experimental Baseline
+
+### Model
+
+```text
+Tokenizer       : byte-level BPE
+Vocabulary size : 8,000
+Parameters      : 8,960,000
+Context length  : 512
+d_model         : 256
+Transformer     : 6 layers
+Attention heads : 8
+Base checkpoint : model/model-gpu-v0.8-chat-clean.pt
+SFT checkpoint  : model/model-llm-try-nagato-chat-v94.pt
+GPU tested      : NVIDIA GeForce RTX 3070 Ti
+```
+
+### Training design
+
+The final SFT path uses a conflict-resolved canonical dataset:
+
+```text
+data/nagato_canonical_v91.jsonl
+        |
+        +-- identity   x12
+        +-- persona    x6
+        +-- knowledge  x5
+        +-- paraphrase x3
+        +-- general    x1
+        |
+        v
+Partial SFT
+  Blocks 5-6 + FinalNorm : LR 5e-6
+  LM Head                : LR 1e-6
+        |
+        v
+model/model-llm-try-nagato-chat-v94.pt
+```
+
+Unknown examples are deliberately **not** trained into the language model in
+the final design.
+
+### Final inference architecture
+
+```text
+User Query
+   |
+   v
+Pre-generation Concept Gate
+   |
+   +-- Unknown concept ------------------> "未学習です"
+   |
+   +-- Known concept
+          |
+          v
+         LLM
+          |
+          v
+Semantic / Category / Confidence Gate
+          |
+          +-- ACCEPT ---------------------> Answer
+          |
+          +-- reject/review --------------> controlled fallback/routing
+```
+
+The key design result is that unknown-state handling is separated from normal
+language generation. Earlier v9.3 experiments trained `未学習です` directly
+into the LM and caused false rejection of known concepts such as AI and
+quantum mechanics. Moving unknown detection to a pre-generation concept gate
+eliminated that interference in the current benchmark.
+
+## v9.x Experimental Progression
+
+```text
+v9.1  canonical conflict resolution
+v9.2  canonical weighted SFT
+v9.3  unknown-paraphrase SFT
+      -> unknown robustness improved, but known knowledge regressed
+
+v9.4  unknown targets removed from LM training
+      -> gate-only unknown experiment
+
+v9.5  pre-generation unknown concept gate
+      -> Unknown rejection 20/20
+
+v9.6  known false-rejection diagnosis
+      -> quantum-mechanics failure isolated to gate, not LM
+
+v9.6.1 category-aware definition evidence
+      -> Known preservation 11/11
+
+v9.7  integrated regression
+      -> Known 11/11
+      -> Unknown 20/20
+      -> Balanced accuracy 100%
+```
+
+## Final v9.7 Regression Result
+
+Run:
+
+```powershell
+python eval_integrated_gate_v97.py
+```
+
+Verified result:
+
+```text
+Known preservation : 11/11 = 100.0%
+Unknown rejection  : 20/20 = 100.0%
+Balanced accuracy  : 100.0%
+Parse failures     : 0
+Regression status  : PASS
+```
+
+This is a **31-prompt controlled regression benchmark**, not a claim of
+general-purpose 100% accuracy.
+
+Known examples cover:
+
+- Nagato identity/persona
+- AI
+- LLM
+- CUDA
+- quantum mechanics
+
+Unknown examples cover paraphrases of:
+
+- space
+- black holes
+- relativity
+- chemistry
+- biology
+- history
+- music
+
+## Recommended v10.0 Verification
+
+```powershell
+python eval_known_false_rejection_v96.py
+python eval_integrated_gate_v97.py
+python chat.py --model model/model-llm-try-nagato-chat-v94.pt
+```
+
+Expected integrated result:
+
+```text
+Regression status : PASS
+```
+
+## Important Experimental Finding
+
+For this small 8.96M-parameter model, the experiments support the following
+architecture:
+
+```text
+LM responsibility   : generate answers for learned/known concepts
+Gate responsibility : decide whether the concept is known and whether the
+                      generated answer is semantically acceptable
+```
+
+In this experiment, that separation was more stable than teaching the LM a
+large set of explicit unknown-answer targets.
+
+---
+
 # LLM_GPU
 
 A homemade Japanese Transformer language-model project implemented in Python /
