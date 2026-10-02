@@ -12718,3 +12718,38 @@ This project is licensed under the **Apache License 2.0**.
 
 Copyright © Hirofumi Inomata.
 
+
+
+## v10.2 Unknown-to-Teaching Learning Loop
+
+v10.2 is developed on the `v10.2` branch on top of the v10.1 stable gate
+baseline. It connects pre-generation UNKNOWN detection to explicit teaching
+without allowing rejected model output to become training data automatically.
+
+```text
+UNKNOWN
+  -> knowledge_queue.jsonl
+  -> /teach or /teachq
+  -> validated trusted pair
+  -> /train
+  -> incremental checkpoint
+```
+
+Key points:
+
+- pre-generation unknown concepts are persisted to the knowledge queue;
+- duplicate unknown requests are deduplicated;
+- successful teaching resolves the corresponding knowledge-queue item;
+- training still requires explicit human teaching and explicit `/train`;
+- `eval_unknown_teaching_loop_v102.py` verifies the control-plane loop.
+
+Recommended verification:
+
+```powershell
+python eval_unknown_teaching_loop_v102.py
+python eval_known_false_rejection_v96.py
+python eval_integrated_gate_v97.py
+python eval_multiturn_history_v101.py
+```
+
+See `RELEASE_NOTES_v10.2.md` for details.
