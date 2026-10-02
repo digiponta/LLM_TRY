@@ -56,8 +56,8 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--concepts", nargs="*", default=DEFAULT_CONCEPTS)
     p.add_argument("--max-source-chars", type=int, default=180)
-    p.add_argument("--max-propositions", type=int, default=12)
-    p.add_argument("--max-answer-chars", type=int, default=420)
+    p.add_argument("--max-propositions", type=int, default=8)
+    p.add_argument("--max-answer-chars", type=int, default=280)
     return p.parse_args()
 
 
@@ -88,7 +88,7 @@ def clean_statement(unit: str) -> str:
 
 
 NEGATION_MARKERS = (
-    "ではない", "でない", "しない", "存在しない", "ない。",
+    "ではない", "でない", "しない", "存在しない", "ない",
     "無い", "なく", "ぬ",
 )
 
@@ -130,13 +130,13 @@ def extract_proposition(concept: str, statement: str) -> Proposition | None:
 
     # Direct subject-predicate patterns.
     patterns = (
-        rf"^(?P<s>{re.escape(concept)})は、?(?P<o>.+?)(?:。)?$",
-        rf"^(?P<s>{re.escape(concept)})も、?(?P<o>.+?)(?:。)?$",
-        rf"^(?P<s>{re.escape(concept)})の定義は、?(?P<o>.+?)(?:。)?$",
-        rf"^(?P<s>{re.escape(concept)})とは、?(?P<o>.+?)(?:。)?$",
+        ("wa", rf"^(?P<s>{re.escape(concept)})は、?(?P<o>.+?)(?:。)?$"),
+        ("mo", rf"^(?P<s>{re.escape(concept)})も、?(?P<o>.+?)(?:。)?$"),
+        ("definition", rf"^(?P<s>{re.escape(concept)})の定義は、?(?P<o>.+?)(?:。)?$"),
+        ("toha", rf"^(?P<s>{re.escape(concept)})とは、?(?P<o>.+?)(?:。)?$"),
     )
 
-    for idx, pattern in enumerate(patterns):
+    for kind, pattern in patterns:
         m = re.match(pattern, body)
         if not m:
             continue
@@ -144,7 +144,7 @@ def extract_proposition(concept: str, statement: str) -> Proposition | None:
         if not obj:
             return None
         predicate = "is"
-        if idx == 2:
+        if kind == "definition":
             predicate = "definition"
         elif "存在" in obj:
             predicate = "exists"
@@ -154,6 +154,20 @@ def extract_proposition(concept: str, statement: str) -> Proposition | None:
             predicate = "expands"
         elif "観測" in obj:
             predicate = "observed_as"
+
+        # For "XもY" keep the original clause structure.  Rewriting it as
+        # "XはY" can corrupt coordinated subjects such as "時間も空間も...".
+        if kind == "mo":
+            return Proposition(
+                subject=concept,
+                predicate="related_statement",
+                object=body.rstrip("。"),
+                condition=condition,
+                context=context,
+                polarity=polarity,
+                source=statement,
+            )
+
         return Proposition(
             subject=concept,
             predicate=predicate,
@@ -239,8 +253,9 @@ def render_clause(p: Proposition) -> str:
     if p.context and p.context not in clause:
         clause = f"{p.context}では、{clause}"
 
-    if not p.polarity and not any(m in clause for m in NEGATION_MARKERS):
-        clause += "ではない"
+    # Polarity is metadata.  Do not synthesize Japanese negation here:
+    # the source clause already carries its own wording, and appending
+    # "ではない" can create broken forms such as "観測されないではない".
     return clause.rstrip("。") + "。"
 
 
@@ -249,30 +264,32 @@ def merge_propositions(
     props: list[Proposition],
     max_chars: int,
 ) -> str:
-    # Keep complementary statements. Positive and negative propositions are
-    # both retained; they are not collapsed into one boolean.
+    """Merge complementary propositions while preserving source wording."""
     clauses: list[str] = []
     used = 0
+
     for p in props:
         clause = render_clause(p)
+
+        # Prefer concise semantic coverage over exhaustive dumping.
+        if len(clauses) >= 6:
+            break
         if used + len(clause) > max_chars and clauses:
             break
+
         clauses.append(clause)
         used += len(clause)
 
     if not clauses:
         return ""
 
-    # Mild connective normalization: first sentence stands alone, following
-    # compatible positive facts are introduced as additional aspects.
     merged = clauses[0]
-    for i, clause in enumerate(clauses[1:], 1):
-        c = clause
-        if c.startswith(concept + "は、"):
-            c = c[len(concept + "は、"):]
-            merged += f"また、{concept}は、{c}"
+    for clause in clauses[1:]:
+        if clause.startswith(concept + "は、"):
+            tail = clause[len(concept + "は、"):]
+            merged += f"また、{tail}"
         else:
-            merged += f"また、{c}"
+            merged += f"また、{clause}"
     return merged
 
 
