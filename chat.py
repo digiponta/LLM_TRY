@@ -491,6 +491,55 @@ def trusted_pairs_from_log(path: Path) -> list[tuple[str, str]]:
     return pairs
 
 
+def trained_known_concepts(
+    learning_log: Path,
+    learning_state: Path,
+) -> set[str]:
+    """Return definition focuses from trusted pairs already consumed by /train.
+
+    A concept is promoted only when the exact trusted pair fingerprint appears
+    in the training state. Merely teaching a pair is not enough.
+    """
+    if not learning_log.exists() or not learning_state.exists():
+        return set()
+
+    try:
+        state = json.loads(learning_state.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return set()
+
+    trained = {str(x) for x in state.get("trained_fingerprints", [])}
+    if not trained:
+        return set()
+
+    concepts: set[str] = set()
+    for raw in learning_log.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+
+        source = str(row.get("source", ""))
+        if source not in ("chat-manual", "chat-approved", "chat-recovery"):
+            continue
+
+        user = str(row.get("user", "")).strip()
+        answer = str(row.get("assistant", "")).strip()
+        if not user or not answer:
+            continue
+
+        if pair_fingerprint(user, answer) not in trained:
+            continue
+
+        focus = extract_definition_focus(user)
+        if focus:
+            concepts.add(focus.lower())
+
+    return concepts
+
+
 def recover_forgotten_pairs_from_queue(
     teaching_queue: Path,
     learning_log: Path,
@@ -1600,7 +1649,10 @@ KNOWN_QUERY_CONCEPTS = {
     "semantic", "セマンティック", "セマンティックデータ",
 }
 
-def pre_generation_unknown_concept(question: str) -> tuple[bool, str]:
+def pre_generation_unknown_concept(
+    question: str,
+    promoted_concepts: set[str] | None = None,
+) -> tuple[bool, str]:
     """
     Question-side lexical concept gate for definition/explanation prompts.
 
@@ -1624,6 +1676,8 @@ def pre_generation_unknown_concept(question: str) -> tuple[bool, str]:
         focus = m.group(1).strip()
         norm = focus.lower()
         if norm in KNOWN_QUERY_CONCEPTS:
+            return False, focus
+        if promoted_concepts and norm in promoted_concepts:
             return False, focus
         return True, focus
     return False, ""
@@ -2359,7 +2413,14 @@ def main() -> None:
             continue
 
         if args.unknown_rejection:
-            pre_unknown, pre_focus = pre_generation_unknown_concept(user_text)
+            promoted_concepts = trained_known_concepts(
+                learning_log,
+                learning_state,
+            )
+            pre_unknown, pre_focus = pre_generation_unknown_concept(
+                user_text,
+                promoted_concepts=promoted_concepts,
+            )
             if pre_unknown:
                 route_result = route_resolution_action(
                     args=args,
