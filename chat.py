@@ -294,11 +294,37 @@ def mark_pair_for_retraining(
     return True
 
 
-def choose_startup_model(requested_model: str) -> Path:
-    # v10.x stable startup: use the requested model exactly.  Legacy online
-    # checkpoints must be selected explicitly with --model to avoid silently
-    # replacing the canonical LLM_TRY SFT checkpoint.
-    return resolve_runtime_path(requested_model)
+def choose_startup_model(
+    requested_model: str,
+    online_output: str = DEFAULT_ONLINE_MODEL,
+    learning_state: str = DEFAULT_LEARNING_STATE,
+) -> Path:
+    """Choose the adaptive checkpoint only when training state proves it exists.
+
+    Explicit --model always wins.  For the default v10.x startup, a local
+    online checkpoint is resumed only when chat_learning_state.json records at
+    least one consumed trusted fingerprint.  This avoids accidentally loading
+    an unrelated legacy online checkpoint.
+    """
+    requested = resolve_runtime_path(requested_model)
+    if requested_model != DEFAULT_MODEL:
+        return requested
+
+    state_path = resolve_runtime_path(learning_state)
+    online_path = resolve_runtime_path(online_output)
+    if not state_path.exists() or not online_path.exists():
+        return requested
+
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return requested
+
+    fingerprints = state.get("trained_fingerprints", [])
+    if isinstance(fingerprints, list) and fingerprints:
+        return online_path
+
+    return requested
 
 def append_learning_pair(
     path: Path,
@@ -491,6 +517,57 @@ def trusted_pairs_from_log(path: Path) -> list[tuple[str, str]]:
     return pairs
 
 
+def trained_known_concepts(
+    learning_log: Path,
+    learning_state: Path,
+) -> set[str]:
+    """Return definition focuses from trusted pairs already consumed by /train.
+
+    A concept is promoted only when the exact trusted pair fingerprint appears
+    in the training state. Merely teaching a pair is not enough.
+    """
+    if not learning_log.exists() or not learning_state.exists():
+        return set()
+
+    try:
+        state = json.loads(learning_state.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return set()
+
+    trained = {str(x) for x in state.get("trained_fingerprints", [])}
+    if not trained:
+        return set()
+
+    concepts: set[str] = set()
+    for raw in learning_log.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+
+        source = str(row.get("source", ""))
+        if source not in ("chat-manual", "chat-approved", "chat-recovery"):
+            continue
+
+        user = str(row.get("user", "")).strip()
+        answer = str(row.get("assistant", "")).strip()
+        if not user or not answer:
+            continue
+
+        if pair_fingerprint(user, answer) not in trained:
+            continue
+
+        focus = extract_concept_query_focus(user)
+        if not focus:
+            focus = extract_definition_focus(user) or ""
+        if focus:
+            concepts.add(focus.lower())
+
+    return concepts
+
+
 def recover_forgotten_pairs_from_queue(
     teaching_queue: Path,
     learning_log: Path,
@@ -606,18 +683,20 @@ def recover_forgotten_pairs_from_queue(
     return matched, reactivated, rejected_old_teachers, selections
 
 
-def resolve_teaching_queue(
-    teaching_queue: Path,
+def resolve_route_queue(
+    queue_path: Path,
     question: str,
+    resolution: str,
 ) -> int:
-    if not teaching_queue.exists():
+    """Mark matching routed work items resolved after trusted teaching."""
+    if not queue_path.exists():
         return 0
 
     target = normalize_pair_text(question).lower()
     changed = 0
     rows: list[dict] = []
 
-    for raw in teaching_queue.read_text(encoding="utf-8").splitlines():
+    for raw in queue_path.read_text(encoding="utf-8").splitlines():
         if not raw.strip():
             continue
         try:
@@ -625,11 +704,9 @@ def resolve_teaching_queue(
         except json.JSONDecodeError:
             continue
 
-        queued_question = normalize_pair_text(
-            str(row.get("user", ""))
-        ).lower()
+        queued_question = normalize_pair_text(str(row.get("user", ""))).lower()
         if (
-            str(row.get("resolution", "")) == "LEARNING_GAP"
+            str(row.get("resolution", "")) == resolution
             and queued_question == target
             and str(row.get("status", "pending")) != "resolved"
         ):
@@ -640,15 +717,25 @@ def resolve_teaching_queue(
         rows.append(row)
 
     if changed:
-        teaching_queue.write_text(
+        queue_path.write_text(
             "".join(
                 json.dumps(row, ensure_ascii=False) + "\n"
                 for row in rows
             ),
             encoding="utf-8",
         )
-
     return changed
+
+
+def resolve_teaching_queue(
+    teaching_queue: Path,
+    question: str,
+) -> int:
+    return resolve_route_queue(
+        teaching_queue,
+        question,
+        "LEARNING_GAP",
+    )
 
 
 def run_online_training(
@@ -1590,14 +1677,34 @@ KNOWN_QUERY_CONCEPTS = {
     "semantic", "セマンティック", "セマンティックデータ",
 }
 
-def pre_generation_unknown_concept(question: str) -> tuple[bool, str]:
-    """
-    Question-side lexical concept gate for definition/explanation prompts.
 
-    Returns (is_unknown, focus). This is intentionally conservative and only
-    triggers on explicit concept-query forms so ordinary persona/chat prompts
-    such as '本は好きですか' are unaffected.
+def extract_bare_concept_focus(question: str) -> str:
+    """Extract a conservative bare concept token such as 'CUDA' or '宇宙'.
+
+    This intentionally excludes conversational/persona phrases and malformed
+    punctuation. It is used only as a pre-generation safety gate.
     """
+    q = question.strip()
+    if not q:
+        return ""
+
+    # Exclude whitespace, sentence punctuation, particles and command-like text.
+    if re.search(r"[\s。、！？!?？,:：;；]", q):
+        return ""
+    if len(q) > 24:
+        return ""
+
+    # Technical identifiers or short Japanese noun-like tokens.
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_+.#\-]{1,23}", q):
+        return q
+    if re.fullmatch(r"[一-龯々ァ-ヶー]{2,24}", q):
+        return q
+
+    return ""
+
+
+def extract_concept_query_focus(question: str) -> str:
+    """Extract a concept from the explicit query forms used by the pre-gate."""
     q = question.strip()
     patterns = (
         r"^(.+?)(?:とは)$",
@@ -1609,14 +1716,34 @@ def pre_generation_unknown_concept(question: str) -> tuple[bool, str]:
     )
     for pattern in patterns:
         m = re.fullmatch(pattern, q)
-        if not m:
-            continue
-        focus = m.group(1).strip()
-        norm = focus.lower()
-        if norm in KNOWN_QUERY_CONCEPTS:
-            return False, focus
-        return True, focus
-    return False, ""
+        if m:
+            return m.group(1).strip()
+    return ""
+
+
+def pre_generation_unknown_concept(
+    question: str,
+    promoted_concepts: set[str] | None = None,
+) -> tuple[bool, str]:
+    """
+    Question-side lexical concept gate for definition/explanation prompts.
+
+    Returns (is_unknown, focus). This is intentionally conservative and only
+    triggers on explicit concept-query forms so ordinary persona/chat prompts
+    such as '本は好きですか' are unaffected.
+    """
+    focus = extract_concept_query_focus(question)
+    if not focus:
+        focus = extract_bare_concept_focus(question)
+    if not focus:
+        return False, ""
+
+    norm = focus.lower()
+    if norm in KNOWN_QUERY_CONCEPTS:
+        return False, focus
+    if promoted_concepts and norm in promoted_concepts:
+        return False, focus
+    return True, focus
 
 
 def classify_resolution(
@@ -1956,7 +2083,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.1 Stable Gate Baseline")
+    print(" LLM_TRY Chat - v10.5 Bare Concept Gate")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2000,7 +2127,11 @@ def main() -> None:
     args = parse_args()
 
     tokenizer_path = resolve_runtime_path(args.tokenizer)
-    model_path = choose_startup_model(args.model)
+    model_path = choose_startup_model(
+        args.model,
+        online_output=args.online_output,
+        learning_state=args.learning_state,
+    )
 
     if not tokenizer_path.exists():
         raise FileNotFoundError(
@@ -2181,6 +2312,15 @@ def main() -> None:
                 corrected,
                 source="chat-manual",
             )
+            resolved_knowledge = resolve_route_queue(
+                Path(args.knowledge_queue),
+                question,
+                "UNKNOWN_KNOWLEDGE",
+            )
+            if resolved_knowledge:
+                print(
+                    f"[resolved knowledge queue entries: {resolved_knowledge}]"
+                )
             if reactivated:
                 print("[previously trained pair reactivated for retraining]")
             print(
@@ -2217,6 +2357,15 @@ def main() -> None:
                         corrected,
                         source="chat-manual",
                     )
+                    resolved_knowledge = resolve_route_queue(
+                        Path(args.knowledge_queue),
+                        last_user_text,
+                        "UNKNOWN_KNOWLEDGE",
+                    )
+                    if resolved_knowledge:
+                        print(
+                            f"[resolved knowledge queue entries: {resolved_knowledge}]"
+                        )
                     if reactivated:
                         print(
                             "[previously trained pair reactivated for retraining]"
@@ -2331,9 +2480,29 @@ def main() -> None:
             continue
 
         if args.unknown_rejection:
-            pre_unknown, pre_focus = pre_generation_unknown_concept(user_text)
+            promoted_concepts = trained_known_concepts(
+                learning_log,
+                learning_state,
+            )
+            pre_unknown, pre_focus = pre_generation_unknown_concept(
+                user_text,
+                promoted_concepts=promoted_concepts,
+            )
             if pre_unknown:
+                route_result = route_resolution_action(
+                    args=args,
+                    resolution="UNKNOWN_KNOWLEDGE",
+                    action="retrieve/teach",
+                    user_text=user_text,
+                    candidate_answer="",
+                    reason=f"unknown concept: {pre_focus}",
+                )
                 print(f"AI> {UNKNOWN_REPLY}")
+                print(f"[route={route_result}]")
+                print(
+                    "[teaching path: /teach ANSWER -> /train "
+                    "(or /teachq QUESTION => ANSWER)]"
+                )
                 if args.show_risk:
                     print(
                         f"[gate=UNKNOWN, confidence=0.000, "
