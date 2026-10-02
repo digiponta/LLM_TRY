@@ -2495,7 +2495,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.7.5 Relation Fact Lookup")
+    print(" LLM_TRY Chat - v10.7.6 Context-Tolerant Relation Lookup")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2921,12 +2921,20 @@ def main() -> None:
                 learning_state,
                 relation_subject,
             )
+            query_condition = str(relation_query.get("condition", "")).strip()
+            query_context = str(relation_query.get("relation_context", "")).strip()
             matching_rows = [
                 fact for fact in relation_rows
                 if fact.get("relation") == relation_query.get("relation")
                 and fact.get("value") == relation_query.get("value")
-                and str(fact.get("condition", "")) == str(relation_query.get("condition", ""))
-                and str(fact.get("relation_context", "")) == str(relation_query.get("relation_context", ""))
+                and (
+                    not query_condition
+                    or str(fact.get("condition", "")).strip() == query_condition
+                )
+                and (
+                    not query_context
+                    or str(fact.get("relation_context", "")).strip() == query_context
+                )
             ]
             if matching_rows:
                 composed = compose_context_fact_answer(
