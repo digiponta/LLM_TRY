@@ -15,7 +15,7 @@ from chat import (
 
 def main() -> None:
     print("=" * 96)
-    print(" LLM_TRY v10.7.5 Relation Fact Lookup Regression")
+    print(" LLM_TRY v10.7.6 Context-Tolerant Relation Lookup Regression")
     print("=" * 96)
 
     passed = 0
@@ -72,6 +72,43 @@ def main() -> None:
                     rendered == "文学は、数学を含む。",
                     rendered,
                 )
+
+        q2 = "文学は、分類上、数学を含む"
+        a2 = "文学は、分類上、数学を含む"
+        check("save-contextual-relation", append_fact_store(store, q2, a2), a2)
+
+        state.write_text(
+            json.dumps(
+                {
+                    "version": "v1.6.2",
+                    "trained_fingerprints": [
+                        pair_fingerprint(q, a),
+                        pair_fingerprint(q2, a2),
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ) + "\n",
+            encoding="utf-8",
+        )
+
+        query_no_context = parse_subject_fact("文学は、数学を含む")
+        facts = trained_facts(store, state, "文学")
+        if query_no_context is not None:
+            qc = str(query_no_context.get("relation_context", "")).strip()
+            qcond = str(query_no_context.get("condition", "")).strip()
+            tolerant = [
+                fact for fact in facts
+                if fact.get("relation") == query_no_context.get("relation")
+                and fact.get("value") == query_no_context.get("value")
+                and (not qcond or str(fact.get("condition", "")).strip() == qcond)
+                and (not qc or str(fact.get("relation_context", "")).strip() == qc)
+            ]
+            check(
+                "context-omitted-query-matches",
+                len(tolerant) >= 1,
+                repr(tolerant),
+            )
 
     print()
     print("Summary")
