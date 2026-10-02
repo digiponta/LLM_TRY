@@ -987,6 +987,11 @@ STRICT_SYNONYMS = {
 }
 
 DEFINITION_CATEGORIES = {
+    "量子力学": ("理論", "微視的", "状態", "重ね合わせ", "測定"),
+    "量子コンピュータ": ("量子", "計算", "量子ビット", "重ね合わせ"),
+    "コンピュータ": ("計算機", "装置", "計算", "情報処理"),
+    "semantic": ("意味", "意味論", "セマンティック"),
+    "セマンティック": ("意味", "意味論", "セマンティック"),
     "llm": ("言語モデル",),
     "大規模言語モデル": ("言語モデル",),
     "gpu": ("画像処理装置", "プロセッサ", "処理装置"),
@@ -1710,6 +1715,23 @@ def semantic_consistency_check(
             if slot_present(slot, answer):
                 covered += 1
                 evidence.append(f"{slot}:lexical")
+                continue
+
+            categories = definition_categories(slot)
+            answer_norm = _normalize_for_similarity(answer)
+            matched_category = next(
+                (
+                    category
+                    for category in categories
+                    if _normalize_for_similarity(category) in answer_norm
+                ),
+                None,
+            )
+            if intent == "definition" and matched_category is not None:
+                covered += 1
+                evidence.append(
+                    f"{slot}:category({matched_category})"
+                )
                 continue
 
             concept_ok, concept_sim, concept_margin = concept_slot_match(
