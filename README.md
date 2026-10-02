@@ -168,6 +168,126 @@ Gate responsibility : decide whether the concept is known and whether the
 In this experiment, that separation was more stable than teaching the LM a
 large set of explicit unknown-answer targets.
 
+
+## v10.1 Multi-turn History Contamination Fix
+
+v10.1 fixes a multi-turn false-rejection bug discovered during interactive
+testing after the v10.0 baseline was frozen.
+
+### Problem
+
+The generation prompt used only `selected_history`, but semantic contamination
+checking still received the complete accepted-turn `history`.
+
+This created an inconsistent state:
+
+```text
+Generation prompt
+  -> selected_history
+
+Semantic contamination check
+  -> full history
+```
+
+As a result, a technically correct response could be rejected because it was
+semantically closer to an older persona question that was not actually present
+in the current generation prompt.
+
+Observed example:
+
+```text
+あなたは誰ですか
+名前を教えてください
+自己紹介してください
+AIとは
+```
+
+The model generated the correct AI definition, but the gate rejected it with:
+
+```text
+reason=history contamination
+```
+
+### Fix
+
+The semantic consistency checker now receives the exact same history subset
+that was selected for generation:
+
+```text
+Generation prompt
+       |
+       v
+selected_history
+       |
+       +------> semantic contamination check
+```
+
+This keeps generation context and contamination analysis aligned.
+
+### v10.1 Multi-turn Regression
+
+Run:
+
+```powershell
+python eval_multiturn_history_v101.py
+```
+
+Verified result:
+
+```text
+Passed            : 8/8
+Failed            : 0/8
+Regression status : PASS
+```
+
+The regression sequence covers:
+
+```text
+あなたは誰ですか
+名前を教えてください
+自己紹介してください
+AIとは
+LLMって何
+CUDAとは
+量子力学とは
+宇宙とは
+```
+
+The first seven prompts must remain known/answerable and the final unknown
+concept must return `未学習です`.
+
+### Stable v10.1 Verification
+
+Recommended checks:
+
+```powershell
+python eval_known_false_rejection_v96.py
+python eval_integrated_gate_v97.py
+python eval_multiturn_history_v101.py
+```
+
+Expected results:
+
+```text
+Known false rejection:
+  PASS         : 11/11
+  FALSE_REJECT : 0/11
+  MODEL_FAIL   : 0/11
+  PARSE_FAIL   : 0/11
+
+Integrated Known/Unknown:
+  Known preservation : 11/11 = 100.0%
+  Unknown rejection  : 20/20 = 100.0%
+  Balanced accuracy  : 100.0%
+  Regression status  : PASS
+
+Multi-turn history:
+  Passed            : 8/8
+  Failed            : 0/8
+  Regression status : PASS
+```
+
+
 ---
 
 # LLM_GPU
