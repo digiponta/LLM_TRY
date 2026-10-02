@@ -2013,7 +2013,8 @@ def main() -> None:
     if not model_path.exists():
         raise FileNotFoundError(
             f"Chat model not found: {model_path}\n"
-            "Expected the LLM_TRY v9.4 Nagato SFT checkpoint.\n"\n            "Place it under LLM_TRY/model/ or pass --model <path>."
+            "Expected the LLM_TRY v9.4 Nagato SFT checkpoint.\n"
+            "Place it under LLM_TRY/model/ or pass --model <path>."
         )
 
     device = torch.device(
