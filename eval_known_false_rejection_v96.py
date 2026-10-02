@@ -60,8 +60,9 @@ def run_chat(model: str, prompt: str, reject: bool) -> str:
 
 def line_after_prefix(text: str, prefix: str) -> str:
     for line in text.splitlines():
-        if line.startswith(prefix):
-            return line[len(prefix):].strip()
+        pos = line.find(prefix)
+        if pos >= 0:
+            return line[pos + len(prefix):].strip()
     return ""
 
 
@@ -80,9 +81,11 @@ def candidate_line(text: str) -> str:
 
 
 def classify(gated_answer: str, raw_answer: str) -> str:
+    if not gated_answer or not raw_answer:
+        return "PARSE_FAIL"
     if gated_answer != "未学習です":
         return "PASS"
-    if raw_answer and raw_answer != "未学習です":
+    if raw_answer != "未学習です":
         return "FALSE_REJECT"
     return "MODEL_FAIL"
 
@@ -93,12 +96,12 @@ def main() -> None:
     args = p.parse_args()
 
     print("=" * 92)
-    print(" LLM_TRY v9.6 Known False-Rejection Diagnostic")
+    print(" LLM_TRY v9.6.1 Known False-Rejection Diagnostic")
     print("=" * 92)
     print("Model:", args.model)
     print()
 
-    counts = {"PASS": 0, "FALSE_REJECT": 0, "MODEL_FAIL": 0}
+    counts = {"PASS": 0, "FALSE_REJECT": 0, "MODEL_FAIL": 0, "PARSE_FAIL": 0}
 
     for q in KNOWN:
         gated = run_chat(args.model, q, reject=True)
@@ -127,6 +130,7 @@ def main() -> None:
     print(f"PASS         : {counts['PASS']}/{total}")
     print(f"FALSE_REJECT : {counts['FALSE_REJECT']}/{total}")
     print(f"MODEL_FAIL   : {counts['MODEL_FAIL']}/{total}")
+    print(f"PARSE_FAIL   : {counts['PARSE_FAIL']}/{total}")
 
 
 if __name__ == "__main__":
