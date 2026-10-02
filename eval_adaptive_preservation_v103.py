@@ -28,10 +28,9 @@ LEARNED = {
 }
 
 STILL_UNKNOWN = [
-    "数学とは",
-    "文学とは",
     "ブラックホールとは",
     "相対性理論とは",
+    "化学とは",
 ]
 
 
@@ -73,7 +72,7 @@ def extract_gate(text: str) -> str:
 
 def main() -> None:
     print("=" * 96)
-    print(" LLM_TRY v10.3 Adaptive Learning Preservation Regression")
+    print(" LLM_TRY v10.4.2 Adaptive Preservation Regression")
     print("=" * 96)
 
     passed = 0
