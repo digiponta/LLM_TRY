@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -40,9 +41,14 @@ def load_unknown(path: Path):
 
 
 def run_chat(model: str, prompt: str) -> str:
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+
     proc = subprocess.run(
         [
             "python",
+            "-X",
+            "utf8",
             "chat.py",
             "--model",
             model,
@@ -53,8 +59,15 @@ def run_chat(model: str, prompt: str) -> str:
         text=True,
         capture_output=True,
         encoding="utf-8",
-        errors="replace",
+        errors="strict",
+        env=env,
     )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"chat.py failed for prompt={prompt!r}\n"
+            f"stdout:\n{proc.stdout}\n"
+            f"stderr:\n{proc.stderr}"
+        )
     return proc.stdout
 
 
@@ -87,9 +100,9 @@ def main():
     for q in KNOWN:
         out = run_chat(args.model, q)
         ans = extract_answer(out)
-        ok = ans != "未学習です"
+        ok = bool(ans) and ans != "未学習です"
         known_ok += int(ok)
-        print(f"[{'PASS' if ok else 'FAIL'}] KNOWN   {q} -> {ans}")
+        print(f"[{'PASS' if ok else 'FAIL'}] KNOWN   {q} -> {ans or '<EMPTY>'}")
 
     print()
     unknown_ok = 0
@@ -98,7 +111,7 @@ def main():
         ans = extract_answer(out)
         ok = ans == "未学習です"
         unknown_ok += int(ok)
-        print(f"[{'PASS' if ok else 'FAIL'}] UNKNOWN {q} -> {ans}")
+        print(f"[{'PASS' if ok else 'FAIL'}] UNKNOWN {q} -> {ans or '<EMPTY>'}")
 
     print()
     print("Summary")
