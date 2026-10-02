@@ -100,6 +100,11 @@ def main() -> None:
         "train_nagato_chat.py",
         "--data", "data/nagato_canonical_v91.jsonl",
         "--val-data", "data/nagato_chat_val.jsonl",
+        "--anchor-data", "data/nagato_identity_anchor.jsonl",
+        "--expansion-data", "data/nagato_response_expansion.jsonl",
+        "--completion-data", "data/nagato_response_completion.jsonl",
+        "--paraphrase-data", "data/nagato_paraphrase_generalization.jsonl",
+        "--consistency-data", "data/nagato_semantic_consistency.jsonl",
         "--tokenizer", args.tokenizer,
         "--base-model", args.raw_output,
         "--output", args.output,
@@ -108,6 +113,31 @@ def main() -> None:
         "--lm-head-learning-rate", str(args.sft_lm_head_learning_rate),
         "--batch-size", str(args.sft_batch_size),
         "--trainable-blocks", "2",
+        "--anchor-weight", "12",
+        "--expansion-weight", "3",
+        "--completion-weight", "5",
+        "--paraphrase-weight", "3",
+        "--consistency-weight", "3",
+    ])
+
+    # Final identity-generalization stabilization.  These short prompts are
+    # intentionally trained last so bare/pronoun identity queries remain
+    # reliable after the broader conversational SFT.
+    run([
+        python,
+        "train_nagato_chat.py",
+        "--data", "data/nagato_identity_generalization_v1081.jsonl",
+        "--val-data", "data/nagato_chat_val.jsonl",
+        "--tokenizer", args.tokenizer,
+        "--base-model", args.output,
+        "--output", args.output,
+        "--epochs", "4",
+        "--learning-rate", "2e-6",
+        "--lm-head-learning-rate", "5e-7",
+        "--batch-size", "6",
+        "--trainable-blocks", "2",
+        "--repeat", "6",
+        "--persona-weight", "1",
     ])
 
     print()
