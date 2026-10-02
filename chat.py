@@ -1678,6 +1678,31 @@ KNOWN_QUERY_CONCEPTS = {
 }
 
 
+def extract_bare_concept_focus(question: str) -> str:
+    """Extract a conservative bare concept token such as 'CUDA' or '宇宙'.
+
+    This intentionally excludes conversational/persona phrases and malformed
+    punctuation. It is used only as a pre-generation safety gate.
+    """
+    q = question.strip()
+    if not q:
+        return ""
+
+    # Exclude whitespace, sentence punctuation, particles and command-like text.
+    if re.search(r"[\s。、！？!?？,:：;；]", q):
+        return ""
+    if len(q) > 24:
+        return ""
+
+    # Technical identifiers or short Japanese noun-like tokens.
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_+.#\-]{1,23}", q):
+        return q
+    if re.fullmatch(r"[一-龯々ァ-ヶー]{2,24}", q):
+        return q
+
+    return ""
+
+
 def extract_concept_query_focus(question: str) -> str:
     """Extract a concept from the explicit query forms used by the pre-gate."""
     q = question.strip()
@@ -1708,6 +1733,8 @@ def pre_generation_unknown_concept(
     such as '本は好きですか' are unaffected.
     """
     focus = extract_concept_query_focus(question)
+    if not focus:
+        focus = extract_bare_concept_focus(question)
     if not focus:
         return False, ""
 
@@ -2056,7 +2083,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.2.4 Persistent Adaptive Checkpoint")
+    print(" LLM_TRY Chat - v10.5 Bare Concept Gate")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
