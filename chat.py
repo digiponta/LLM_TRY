@@ -345,6 +345,60 @@ def append_learning_pair(
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def normalize_condition(condition: str) -> dict[str, object]:
+    """Normalize simple condition polarity.
+
+    Examples:
+      条件A       -> predicate=条件A, polarity=True
+      条件Aでない -> predicate=条件A, polarity=False
+      NOT A       -> predicate=A, polarity=False
+      !A          -> predicate=A, polarity=False
+    """
+    raw = condition.strip()
+    if not raw:
+        return {"predicate": "", "polarity": True, "raw": ""}
+
+    neg_patterns = (
+        r"^(.+?)でない$",
+        r"^(.+?)ではない$",
+        r"^NOT\s+(.+)$",
+        r"^not\s+(.+)$",
+        r"^!\s*(.+)$",
+        r"^¬\s*(.+)$",
+    )
+    for pattern in neg_patterns:
+        m = re.fullmatch(pattern, raw)
+        if m:
+            predicate = m.group(1).strip()
+            return {
+                "predicate": predicate,
+                "polarity": False,
+                "raw": raw,
+            }
+
+    return {
+        "predicate": raw,
+        "polarity": True,
+        "raw": raw,
+    }
+
+
+def conditions_mutually_exclusive(
+    left: str | dict[str, object],
+    right: str | dict[str, object],
+) -> bool:
+    """Known logical exclusivity for P versus NOT P."""
+    l = normalize_condition(left) if isinstance(left, str) else left
+    r = normalize_condition(right) if isinstance(right, str) else right
+
+    lp = str(l.get("predicate", "")).strip().lower()
+    rp = str(r.get("predicate", "")).strip().lower()
+    if not lp or not rp or lp != rp:
+        return False
+
+    return bool(l.get("polarity", True)) != bool(r.get("polarity", True))
+
+
 def parse_subject_fact(answer: str) -> dict[str, str] | None:
     """Parse a conservative context-aware Japanese copular fact.
 
@@ -377,11 +431,14 @@ def parse_subject_fact(answer: str) -> dict[str, str] | None:
         relation = m_attr.group(2).strip()
         value = m_attr.group(3).strip(" 、,")
         if subject and relation and value:
+            cond = normalize_condition(condition)
             return {
                 "subject": subject,
                 "relation": relation,
                 "value": value,
                 "condition": condition,
+                "condition_predicate": str(cond["predicate"]),
+                "condition_polarity": bool(cond["polarity"]),
             }
 
     # Generic copular relation: XはYである/です
@@ -393,11 +450,14 @@ def parse_subject_fact(answer: str) -> dict[str, str] | None:
         subject = m_is.group(1).strip()
         value = m_is.group(2).strip(" 、,")
         if subject and value:
+            cond = normalize_condition(condition)
             return {
                 "subject": subject,
                 "relation": "is",
                 "value": value,
                 "condition": condition,
+                "condition_predicate": str(cond["predicate"]),
+                "condition_polarity": bool(cond["polarity"]),
             }
     return None
 
@@ -417,6 +477,8 @@ def append_fact_store(
     relation = parsed["relation"]
     value = parsed["value"]
     condition = parsed["condition"]
+    condition_predicate = str(parsed.get("condition_predicate", ""))
+    condition_polarity = bool(parsed.get("condition_polarity", True))
     fp = pair_fingerprint(question, answer)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -452,6 +514,8 @@ def append_fact_store(
         "relation": relation,
         "value": value,
         "condition": condition,
+        "condition_predicate": condition_predicate,
+        "condition_polarity": condition_polarity,
         "question": question,
         "answer": answer,
         "fingerprint": fp,
@@ -499,11 +563,15 @@ def trained_facts(
         if str(row.get("fingerprint", "")) not in trained:
             continue
 
+        condition = str(row.get("condition", "")).strip()
+        cond = normalize_condition(condition)
         fact = {
             "subject": str(row.get("subject", "")).strip(),
             "relation": str(row.get("relation", "is")).strip() or "is",
             "value": str(row.get("value", "")).strip(),
-            "condition": str(row.get("condition", "")).strip(),
+            "condition": condition,
+            "condition_predicate": str(row.get("condition_predicate", cond["predicate"])).strip(),
+            "condition_polarity": bool(row.get("condition_polarity", cond["polarity"])),
         }
         key = (
             fact["relation"].lower(),
@@ -582,12 +650,33 @@ def context_conflict_candidates(
     conflicts: list[tuple[dict[str, str], dict[str, str]]] = []
     for i, left in enumerate(facts):
         for right in facts[i + 1:]:
-            same_scope = (
+            same_subject_relation = (
                 left["subject"].lower() == right["subject"].lower()
                 and left["relation"].lower() == right["relation"].lower()
-                and left["condition"].lower() == right["condition"].lower()
             )
-            if same_scope and left["value"].lower() != right["value"].lower():
+            if not same_subject_relation:
+                continue
+
+            if conditions_mutually_exclusive(
+                {
+                    "predicate": left.get("condition_predicate", ""),
+                    "polarity": left.get("condition_polarity", True),
+                },
+                {
+                    "predicate": right.get("condition_predicate", ""),
+                    "polarity": right.get("condition_polarity", True),
+                },
+            ):
+                continue
+
+            same_condition = (
+                str(left.get("condition_predicate", "")).lower()
+                == str(right.get("condition_predicate", "")).lower()
+                and bool(left.get("condition_polarity", True))
+                == bool(right.get("condition_polarity", True))
+            )
+
+            if same_condition and left["value"].lower() != right["value"].lower():
                 conflicts.append((left, right))
     return conflicts
 
@@ -2332,7 +2421,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.7 Context-Aware Fact Learning")
+    print(" LLM_TRY Chat - v10.7.1 Condition Polarity Logic")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
