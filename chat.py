@@ -2207,7 +2207,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.6.1 Fact/LM Learning Separation")
+    print(" LLM_TRY Chat - v10.6.2 Single/Multi Fact Retrieval")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2633,7 +2633,7 @@ def main() -> None:
                 learning_state,
                 fact_focus,
             )
-            if len(fact_values) >= 2:
+            if len(fact_values) >= 1:
                 composed = compose_fact_answer(fact_focus, fact_values)
                 print(f"AI> {composed}")
                 if args.show_risk:
