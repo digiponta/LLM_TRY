@@ -1559,6 +1559,43 @@ def answer_concept_consistency(
 
     return True, "answer concept consistent"
 
+KNOWN_QUERY_CONCEPTS = {
+    "ai", "人工知能",
+    "llm", "大規模言語モデル",
+    "cpu", "gpu", "cuda",
+    "コンピュータ",
+    "量子力学", "量子コンピュータ",
+    "semantic", "セマンティック", "セマンティックデータ",
+}
+
+def pre_generation_unknown_concept(question: str) -> tuple[bool, str]:
+    """
+    Question-side lexical concept gate for definition/explanation prompts.
+
+    Returns (is_unknown, focus). This is intentionally conservative and only
+    triggers on explicit concept-query forms so ordinary persona/chat prompts
+    such as '本は好きですか' are unaffected.
+    """
+    q = question.strip()
+    patterns = (
+        r"^(.+?)(?:とは)$",
+        r"^(.+?)(?:って何)$",
+        r"^(.+?)(?:について教えて)$",
+        r"^(.+?)(?:を説明して)$",
+        r"^(.+?)(?:を簡単に説明して)$",
+        r"^([^\s。、！？?]{1,24})は$",
+    )
+    for pattern in patterns:
+        m = re.fullmatch(pattern, q)
+        if not m:
+            continue
+        focus = m.group(1).strip()
+        norm = focus.lower()
+        if norm in KNOWN_QUERY_CONCEPTS:
+            return False, focus
+        return True, focus
+    return False, ""
+
 
 def classify_resolution(
     accepted: bool,
@@ -2249,6 +2286,27 @@ def main() -> None:
             print()
             last_ai_reply = None
             continue
+
+        if args.unknown_rejection:
+            pre_unknown, pre_focus = pre_generation_unknown_concept(user_text)
+            if pre_unknown:
+                print(f"AI> {UNKNOWN_REPLY}")
+                if args.show_risk:
+                    print(
+                        f"[gate=UNKNOWN, confidence=0.000, "
+                        f"min_tok_conf=0.000, mean_margin=0.000, "
+                        f"agreement=1.000, sem_agreement=1.000, "
+                        f"intent=concept_precheck, slots={pre_focus}, "
+                        f"slot_cov=0.00, qa_sim=0.000, prev_sim=-1.000, "
+                        f"agr_th={args.min_agreement:.2f}, context_turns=0, "
+                        f"resolution=UNKNOWN_KNOWLEDGE, action=retrieve/teach, "
+                        f"route=pre-generation concept gate, "
+                        f"reason=unknown concept: {pre_focus}]"
+                    )
+                print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
+                print()
+                last_ai_reply = None
+                continue
 
         prompt, selected_history = build_prompt(
             history=history,
