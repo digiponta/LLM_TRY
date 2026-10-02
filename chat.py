@@ -53,6 +53,32 @@ USER_PREFIX = "人: "
 AI_PREFIX = "AI: "
 UNKNOWN_REPLY = "未学習です"
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+SIBLING_LLM_GPU_ROOT = PROJECT_ROOT.parent / "LLM_GPU"
+
+
+def resolve_runtime_path(value: str | Path) -> Path:
+    """Resolve runtime assets robustly from LLM_TRY or sibling LLM_GPU.
+
+    Resolution order for relative paths:
+      1. current working directory (backward compatible)
+      2. LLM_TRY repository root
+      3. sibling ../LLM_GPU repository (for shared model assets)
+    """
+    raw = Path(value)
+    if raw.is_absolute():
+        return raw
+
+    candidates = [raw, PROJECT_ROOT / raw]
+    if raw.parts and raw.parts[0] == "model":
+        candidates.append(SIBLING_LLM_GPU_ROOT / raw)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    return (PROJECT_ROOT / raw).resolve()
+
 
 @dataclass
 class GenerationResult:
@@ -269,13 +295,13 @@ def mark_pair_for_retraining(
 
 
 def choose_startup_model(requested_model: str) -> Path:
-    requested = Path(requested_model)
+    requested = resolve_runtime_path(requested_model)
     if requested_model != DEFAULT_MODEL:
         return requested
 
     candidates = [
-        Path(DEFAULT_ONLINE_MODEL),
-        Path(DEFAULT_PREVIOUS_ONLINE_MODEL),
+        resolve_runtime_path(DEFAULT_ONLINE_MODEL),
+        resolve_runtime_path(DEFAULT_PREVIOUS_ONLINE_MODEL),
         requested,
     ]
     for path in candidates:
@@ -1982,12 +2008,15 @@ def print_info(
 def main() -> None:
     args = parse_args()
 
-    tokenizer_path = Path(args.tokenizer)
+    tokenizer_path = resolve_runtime_path(args.tokenizer)
     model_path = choose_startup_model(args.model)
 
     if not tokenizer_path.exists():
         raise FileNotFoundError(
-            f"Tokenizer not found: {tokenizer_path}"
+            f"Tokenizer not found: {tokenizer_path}\n"
+            "Place tokenizer-v0.7-bpe.json under LLM_TRY/model/ or "
+            "keep the sibling LLM_GPU/model/ directory available. "
+            "You can also pass --tokenizer <path>."
         )
 
     if not model_path.exists():
@@ -2006,7 +2035,7 @@ def main() -> None:
         device=device,
     )
 
-    calibration_path = Path(args.concept_calibration)
+    calibration_path = resolve_runtime_path(args.concept_calibration)
     load_concept_calibration(calibration_path, device)
 
     if model.vocab_size != tokenizer.vocab_size:
