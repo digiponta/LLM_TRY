@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--data", default="data/nagato_canonical_v91.jsonl")
     p.add_argument("--tokenizer", default="model/tokenizer-v0.7-bpe.json")
     p.add_argument("--base-model", default="model/model-gpu-v0.8-chat-clean.pt")
-    p.add_argument("--output", default="model/model-llm-try-nagato-chat-v92.pt")
+    p.add_argument("--output", default="model/model-llm-try-nagato-chat-v93.pt")
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--learning-rate", type=float, default=5e-6)
     p.add_argument("--batch-size", type=int, default=8)
@@ -52,6 +52,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--completion-data", default="")
     p.add_argument("--paraphrase-data", default="")
     p.add_argument("--consistency-data", default="")
+    p.add_argument("--unknown-data", default="data/nagato_unknown_paraphrase.jsonl")
     p.add_argument("--patience", type=int, default=3)
     p.add_argument("--weight-decay", type=float, default=0.01)
     p.add_argument("--grad-clip", type=float, default=1.0)
@@ -65,6 +66,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--canonical-persona-weight", type=int, default=6)
     p.add_argument("--canonical-knowledge-weight", type=int, default=5)
     p.add_argument("--canonical-paraphrase-weight", type=int, default=3)
+    p.add_argument("--unknown-weight", type=int, default=4)
     p.add_argument(
         "--persona-weight",
         type=int,
@@ -320,6 +322,7 @@ def main() -> None:
     completion_data_path = Path(args.completion_data) if args.completion_data else None
     paraphrase_data_path = Path(args.paraphrase_data) if args.paraphrase_data else None
     consistency_data_path = Path(args.consistency_data) if args.consistency_data else None
+    unknown_data_path = Path(args.unknown_data) if args.unknown_data else None
     tokenizer_path = Path(args.tokenizer)
     base_path = Path(args.base_model)
     output_path = Path(args.output)
@@ -342,6 +345,7 @@ def main() -> None:
     completion_pairs = load_pairs(completion_data_path) if completion_data_path else []
     paraphrase_pairs = load_pairs(paraphrase_data_path) if paraphrase_data_path else []
     consistency_pairs = load_pairs(consistency_data_path) if consistency_data_path else []
+    unknown_pairs = load_pairs(unknown_data_path) if unknown_data_path else []
     train_pairs = list(pairs)
     random.shuffle(train_pairs)
 
@@ -434,6 +438,11 @@ def main() -> None:
                 [(user, answer)] * max(1, args.consistency_weight)
             )
 
+    for user, answer in unknown_pairs:
+        repeated_train.extend(
+            [(user, answer)] * max(1, args.unknown_weight)
+        )
+
     random.shuffle(repeated_train)
 
     train_ds = ConversationDataset(
@@ -499,6 +508,7 @@ def main() -> None:
     print("Completion data :", completion_data_path)
     print("Paraphrase data :", paraphrase_data_path)
     print("Consistency data:", consistency_data_path)
+    print("Unknown data    :", unknown_data_path)
     print("Unique train    :", len(pairs))
     print("Train pairs     :", len(train_pairs))
     print("Validation pairs:", len(val_pairs), "(independent paraphrases)")
@@ -507,6 +517,7 @@ def main() -> None:
     print("Completion pairs:", len(completion_pairs))
     print("Paraphrase pairs:", len(paraphrase_pairs))
     print("Consistency pairs:", len(consistency_pairs))
+    print("Unknown pairs   :", len(unknown_pairs))
     print("Base repeat     :", args.repeat)
     print("Persona weight  :", args.persona_weight)
     print("Anchor weight   :", args.anchor_weight)
@@ -514,6 +525,7 @@ def main() -> None:
     print("Completion weight:", args.completion_weight)
     print("Paraphrase weight:", args.paraphrase_weight)
     print("Consistency weight:", args.consistency_weight)
+    print("Unknown weight  :", args.unknown_weight)
     print("Persona pairs   :", persona_pairs)
     print("Normal pairs    :", normal_pairs)
     print("Canonical mode   :", canonical_mode)
