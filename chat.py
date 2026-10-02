@@ -294,11 +294,37 @@ def mark_pair_for_retraining(
     return True
 
 
-def choose_startup_model(requested_model: str) -> Path:
-    # v10.x stable startup: use the requested model exactly.  Legacy online
-    # checkpoints must be selected explicitly with --model to avoid silently
-    # replacing the canonical LLM_TRY SFT checkpoint.
-    return resolve_runtime_path(requested_model)
+def choose_startup_model(
+    requested_model: str,
+    online_output: str = DEFAULT_ONLINE_MODEL,
+    learning_state: str = DEFAULT_LEARNING_STATE,
+) -> Path:
+    """Choose the adaptive checkpoint only when training state proves it exists.
+
+    Explicit --model always wins.  For the default v10.x startup, a local
+    online checkpoint is resumed only when chat_learning_state.json records at
+    least one consumed trusted fingerprint.  This avoids accidentally loading
+    an unrelated legacy online checkpoint.
+    """
+    requested = resolve_runtime_path(requested_model)
+    if requested_model != DEFAULT_MODEL:
+        return requested
+
+    state_path = resolve_runtime_path(learning_state)
+    online_path = resolve_runtime_path(online_output)
+    if not state_path.exists() or not online_path.exists():
+        return requested
+
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return requested
+
+    fingerprints = state.get("trained_fingerprints", [])
+    if isinstance(fingerprints, list) and fingerprints:
+        return online_path
+
+    return requested
 
 def append_learning_pair(
     path: Path,
@@ -2030,7 +2056,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.2.3 Single-Pair Incremental Learning")
+    print(" LLM_TRY Chat - v10.2.4 Persistent Adaptive Checkpoint")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2074,7 +2100,7 @@ def main() -> None:
     args = parse_args()
 
     tokenizer_path = resolve_runtime_path(args.tokenizer)
-    model_path = choose_startup_model(args.model)
+    model_path = choose_startup_model(\n        args.model,\n        online_output=args.online_output,\n        learning_state=args.learning_state,\n    )
 
     if not tokenizer_path.exists():
         raise FileNotFoundError(
