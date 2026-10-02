@@ -13,7 +13,9 @@ import tempfile
 from chat import (
     append_fact_store,
     compose_context_fact_answer,
+    conditions_mutually_exclusive,
     context_conflict_candidates,
+    normalize_condition,
     pair_fingerprint,
     trained_facts,
 )
@@ -21,7 +23,7 @@ from chat import (
 
 def main() -> None:
     print("=" * 96)
-    print(" LLM_TRY v10.7 Context-Aware Fact Learning Regression")
+    print(" LLM_TRY v10.7.1 Condition Polarity Logic Regression")
     print("=" * 96)
 
     passed = 0
@@ -117,6 +119,55 @@ def main() -> None:
                 left["condition"] == right["condition"] == "条件A",
                 detail,
             )
+
+        check(
+            "polarity-normalize-positive",
+            normalize_condition("条件A")["polarity"] is True,
+            repr(normalize_condition("条件A")),
+        )
+        check(
+            "polarity-normalize-negative",
+            normalize_condition("条件Aでない")["polarity"] is False,
+            repr(normalize_condition("条件Aでない")),
+        )
+        check(
+            "logical-mutual-exclusion",
+            conditions_mutually_exclusive("条件A", "条件Aでない"),
+            "条件A vs 条件Aでない",
+        )
+
+        store2 = root / "fact_store_negation.jsonl"
+        state2 = root / "state_negation.json"
+        q4 = "Xについて"
+        a4 = "条件Aのとき、Xの色は赤である。"
+        q5 = "Xについて"
+        a5 = "条件Aでないとき、Xの色は青である。"
+
+        check("save-positive-condition", append_fact_store(store2, q4, a4), a4)
+        check("save-negative-condition", append_fact_store(store2, q5, a5), a5)
+
+        state2.write_text(
+            json.dumps(
+                {
+                    "version": "v1.6.2",
+                    "trained_fingerprints": [
+                        pair_fingerprint(q4, a4),
+                        pair_fingerprint(q5, a5),
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ) + "\n",
+            encoding="utf-8",
+        )
+
+        neg_facts = trained_facts(store2, state2, "X")
+        neg_conflicts = context_conflict_candidates(neg_facts)
+        check(
+            "positive-negative-coexist",
+            len(neg_conflicts) == 0,
+            f"conflicts={len(neg_conflicts)}",
+        )
 
     print()
     print("Summary")
