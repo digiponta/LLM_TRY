@@ -606,18 +606,20 @@ def recover_forgotten_pairs_from_queue(
     return matched, reactivated, rejected_old_teachers, selections
 
 
-def resolve_teaching_queue(
-    teaching_queue: Path,
+def resolve_route_queue(
+    queue_path: Path,
     question: str,
+    resolution: str,
 ) -> int:
-    if not teaching_queue.exists():
+    """Mark matching routed work items resolved after trusted teaching."""
+    if not queue_path.exists():
         return 0
 
     target = normalize_pair_text(question).lower()
     changed = 0
     rows: list[dict] = []
 
-    for raw in teaching_queue.read_text(encoding="utf-8").splitlines():
+    for raw in queue_path.read_text(encoding="utf-8").splitlines():
         if not raw.strip():
             continue
         try:
@@ -625,11 +627,9 @@ def resolve_teaching_queue(
         except json.JSONDecodeError:
             continue
 
-        queued_question = normalize_pair_text(
-            str(row.get("user", ""))
-        ).lower()
+        queued_question = normalize_pair_text(str(row.get("user", ""))).lower()
         if (
-            str(row.get("resolution", "")) == "LEARNING_GAP"
+            str(row.get("resolution", "")) == resolution
             and queued_question == target
             and str(row.get("status", "pending")) != "resolved"
         ):
@@ -640,15 +640,25 @@ def resolve_teaching_queue(
         rows.append(row)
 
     if changed:
-        teaching_queue.write_text(
+        queue_path.write_text(
             "".join(
                 json.dumps(row, ensure_ascii=False) + "\n"
                 for row in rows
             ),
             encoding="utf-8",
         )
-
     return changed
+
+
+def resolve_teaching_queue(
+    teaching_queue: Path,
+    question: str,
+) -> int:
+    return resolve_route_queue(
+        teaching_queue,
+        question,
+        "LEARNING_GAP",
+    )
 
 
 def run_online_training(
@@ -2181,6 +2191,15 @@ def main() -> None:
                 corrected,
                 source="chat-manual",
             )
+            resolved_knowledge = resolve_route_queue(
+                Path(args.knowledge_queue),
+                question,
+                "UNKNOWN_KNOWLEDGE",
+            )
+            if resolved_knowledge:
+                print(
+                    f"[resolved knowledge queue entries: {resolved_knowledge}]"
+                )
             if reactivated:
                 print("[previously trained pair reactivated for retraining]")
             print(
@@ -2217,6 +2236,15 @@ def main() -> None:
                         corrected,
                         source="chat-manual",
                     )
+                    resolved_knowledge = resolve_route_queue(
+                        Path(args.knowledge_queue),
+                        last_user_text,
+                        "UNKNOWN_KNOWLEDGE",
+                    )
+                    if resolved_knowledge:
+                        print(
+                            f"[resolved knowledge queue entries: {resolved_knowledge}]"
+                        )
                     if reactivated:
                         print(
                             "[previously trained pair reactivated for retraining]"
@@ -2333,7 +2361,20 @@ def main() -> None:
         if args.unknown_rejection:
             pre_unknown, pre_focus = pre_generation_unknown_concept(user_text)
             if pre_unknown:
+                route_result = route_resolution_action(
+                    args=args,
+                    resolution="UNKNOWN_KNOWLEDGE",
+                    action="retrieve/teach",
+                    user_text=user_text,
+                    candidate_answer="",
+                    reason=f"unknown concept: {pre_focus}",
+                )
                 print(f"AI> {UNKNOWN_REPLY}")
+                print(f"[route={route_result}]")
+                print(
+                    "[teaching path: /teach ANSWER -> /train "
+                    "(or /teachq QUESTION => ANSWER)]"
+                )
                 if args.show_risk:
                     print(
                         f"[gate=UNKNOWN, confidence=0.000, "
