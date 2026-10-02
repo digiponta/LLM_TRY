@@ -38,7 +38,7 @@ from tokenizer_bpe import Tokenizer
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
-DEFAULT_MODEL = "model/model-gpu-v0.8-chat-clean.pt"
+DEFAULT_MODEL = "model/model-llm-try-nagato-chat-v94.pt"
 DEFAULT_PREVIOUS_ONLINE_MODEL = "model/model-gpu-v1.6.1-online.pt"
 DEFAULT_CONCEPT_CALIBRATION = "model/concept-calibration-v1512.pt"
 DEFAULT_LEARNING_LOG = "data/chat_history.jsonl"
@@ -295,19 +295,10 @@ def mark_pair_for_retraining(
 
 
 def choose_startup_model(requested_model: str) -> Path:
-    requested = resolve_runtime_path(requested_model)
-    if requested_model != DEFAULT_MODEL:
-        return requested
-
-    candidates = [
-        resolve_runtime_path(DEFAULT_ONLINE_MODEL),
-        resolve_runtime_path(DEFAULT_PREVIOUS_ONLINE_MODEL),
-        requested,
-    ]
-    for path in candidates:
-        if path.exists():
-            return path
-    return requested
+    # v10.x stable startup: use the requested model exactly.  Legacy online
+    # checkpoints must be selected explicitly with --model to avoid silently
+    # replacing the canonical LLM_TRY SFT checkpoint.
+    return resolve_runtime_path(requested_model)
 
 def append_learning_pair(
     path: Path,
@@ -680,7 +671,7 @@ def run_online_training(
         str(trainer),
         "--chat-data", str(learning_log),
         "--base-model", str(model_path),
-        "--tokenizer", str(args.tokenizer),
+        "--tokenizer", str(resolve_runtime_path(args.tokenizer)),
         "--output", str(output),
         "--state", str(args.learning_state),
     ]
@@ -1965,7 +1956,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_GPU Chat - v1.6.27 Greeting-Consistency Fix")
+    print(" LLM_TRY Chat - v10.1 Stable Gate Baseline")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2022,7 +2013,7 @@ def main() -> None:
     if not model_path.exists():
         raise FileNotFoundError(
             f"Chat model not found: {model_path}\n"
-            "Expected the cleaned v0.8 conversational checkpoint."
+            "Expected the LLM_TRY v9.4 Nagato SFT checkpoint.\n"\n            "Place it under LLM_TRY/model/ or pass --model <path>."
         )
 
     device = torch.device(
