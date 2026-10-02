@@ -49,7 +49,7 @@ DEFAULT_GATE_REVIEW_QUEUE = "data/gate_review_queue.jsonl"
 DEFAULT_ONLINE_MODEL = "model/model-gpu-v1.6.2-online.pt"
 DEFAULT_ONLINE_TRAINER = "online_train.py"
 DEFAULT_RAW_KNOWLEDGE_CORPUS = "data/data-nagato.txt"
-DEFAULT_SEMANTIC_KNOWLEDGE = "data/nagato_semantic_merge_v1086.jsonl"
+DEFAULT_SEMANTIC_KNOWLEDGE = "data/nagato_semantic_merge_v1089.jsonl"
 
 USER_PREFIX = "人: "
 AI_PREFIX = "AI: "
@@ -1770,6 +1770,8 @@ def semantic_knowledge_lookup(
     proposition knowledge file.  This is retrieval, not generation.
     """
     focus = extract_concept_query_focus(question)
+    if not focus:
+        focus = extract_bare_concept_focus(question)
     if not focus:
         return None
 
