@@ -2030,7 +2030,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.2.2 Adaptive Concept Promotion")
+    print(" LLM_TRY Chat - v10.2.3 Single-Pair Incremental Learning")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
