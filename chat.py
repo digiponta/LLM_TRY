@@ -2495,7 +2495,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.7.4 Definition Fact Separation")
+    print(" LLM_TRY Chat - v10.7.5 Relation Fact Lookup")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2911,6 +2911,44 @@ def main() -> None:
             print()
             last_ai_reply = None
             continue
+
+        # v10.7.5: relation-aware fact lookup for assertion/query-shaped inputs.
+        relation_query = parse_subject_fact(user_text)
+        if relation_query is not None:
+            relation_subject = relation_query["subject"]
+            relation_rows = trained_facts(
+                Path(args.fact_store),
+                learning_state,
+                relation_subject,
+            )
+            matching_rows = [
+                fact for fact in relation_rows
+                if fact.get("relation") == relation_query.get("relation")
+                and fact.get("value") == relation_query.get("value")
+                and str(fact.get("condition", "")) == str(relation_query.get("condition", ""))
+                and str(fact.get("relation_context", "")) == str(relation_query.get("relation_context", ""))
+            ]
+            if matching_rows:
+                composed = compose_context_fact_answer(
+                    relation_subject,
+                    [matching_rows[0]],
+                )
+                print(f"AI> {composed}")
+                if args.show_risk:
+                    print(
+                        f"[gate=KNOWN, confidence=1.000, min_tok_conf=1.000, "
+                        f"mean_margin=1.000, agreement=1.000, sem_agreement=1.000, "
+                        f"intent=fact_lookup, slots={relation_subject}, "
+                        f"slot_cov=1.00, qa_sim=1.000, prev_sim=-1.000, "
+                        f"agr_th={args.min_agreement:.2f}, context_turns=0, "
+                        f"resolution=ACCEPT, action=lookup/fact, "
+                        f"route=trained fact store, reason=exact trained relation fact]"
+                    )
+                print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
+                print()
+                last_ai_reply = composed
+                history.append((user_text, composed))
+                continue
 
         fact_focus = extract_concept_query_focus(user_text)
         if not fact_focus:
