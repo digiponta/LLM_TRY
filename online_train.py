@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--base-model", default="model/model-gpu-v0.8-chat-clean.pt")
     p.add_argument("--output", default="model/model-gpu-v1.6.2-online.pt")
     p.add_argument("--epochs", type=int, default=8)
-    p.add_argument("--learning-rate", type=float, default=3e-5)
+    p.add_argument("--learning-rate", type=float, default=1e-5)
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--validation-ratio", type=float, default=0.15)
     p.add_argument("--patience", type=int, default=3)
@@ -69,6 +69,17 @@ def parse_args() -> argparse.Namespace:
         help="Weak replay weight for previously trained trusted pairs.",
     )
     p.add_argument("--replay-weight", type=int, default=1)
+    p.add_argument(
+        "--stability-data",
+        default="data/stability_replay_v104.jsonl",
+        help="Stable baseline QA replay used to reduce catastrophic forgetting.",
+    )
+    p.add_argument(
+        "--stability-weight",
+        type=int,
+        default=1,
+        help="Replay multiplier for stable baseline QA pairs.",
+    )
     p.add_argument(
         "--tiny-threshold",
         type=int,
@@ -254,6 +265,7 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     chat_path = Path(args.chat_data)
     replay_path = Path(args.replay_data)
+    stability_path = Path(args.stability_data)
     tokenizer_path = Path(args.tokenizer)
     base_path = Path(args.base_model)
     output_path = Path(args.output)
@@ -302,6 +314,16 @@ def main() -> None:
         )
 
     replay = load_replay_pairs(replay_path)
+    stability_rows = load_chat_jsonl(stability_path)
+    stability_pairs = [
+        (user, answer)
+        for user, answer, _ in stability_rows
+    ]
+    weighted_stability: List[Tuple[str, str]] = []
+    for pair in stability_pairs:
+        weighted_stability.extend(
+            [pair] * max(0, args.stability_weight)
+        )
     replay_count = min(
         len(replay),
         max(0, int(round(len(pending_rows) * args.replay_ratio))),
@@ -312,7 +334,7 @@ def main() -> None:
     for pair in replay_pairs:
         weighted_replay.extend([pair] * max(1, args.replay_weight))
 
-    pairs = list(weighted_new_pairs) + trusted_replay + weighted_replay
+    pairs = list(weighted_new_pairs) + trusted_replay + weighted_replay + weighted_stability
     random.shuffle(pairs)
 
     tokenizer = Tokenizer.load(str(tokenizer_path))
@@ -365,6 +387,7 @@ def main() -> None:
     print("Recovery new    :", len(recovery_rows), f"(x{args.recovery_weight})")
     print("Legacy auto     :", len(auto_rows), "(ignored)")
     print("Corpus replay   :", replay_count, f"(x{args.replay_weight})")
+    print("Stability replay:", len(stability_pairs), f"(x{args.stability_weight})")
     print("Tiny-data mode  :", tiny_mode)
     print("Train pairs     :", len(train_pairs))
     print("Validation pairs:", len(val_pairs))
