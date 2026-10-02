@@ -48,6 +48,7 @@ DEFAULT_KNOWLEDGE_QUEUE = "data/knowledge_queue.jsonl"
 DEFAULT_GATE_REVIEW_QUEUE = "data/gate_review_queue.jsonl"
 DEFAULT_ONLINE_MODEL = "model/model-gpu-v1.6.2-online.pt"
 DEFAULT_ONLINE_TRAINER = "online_train.py"
+DEFAULT_FACT_STORE = "data/fact_store.jsonl"
 
 USER_PREFIX = "人: "
 AI_PREFIX = "AI: "
@@ -120,6 +121,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--online-trainer", default=DEFAULT_ONLINE_TRAINER)
     parser.add_argument("--online-output", default=DEFAULT_ONLINE_MODEL)
+    parser.add_argument("--fact-store", default=DEFAULT_FACT_STORE)
     parser.add_argument(
         "--history-turns",
         type=int,
@@ -341,6 +343,128 @@ def append_learning_pair(
     }
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def parse_subject_fact(answer: str) -> tuple[str, str] | None:
+    """Parse a conservative Japanese copular fact: XはY(である/です)."""
+    text = answer.strip()
+    text = re.sub(r"[。．]+$", "", text)
+    patterns = (
+        r"^([^\s。、！？?]{1,32})は、?(.+?)である$",
+        r"^([^\s。、！？?]{1,32})は、?(.+?)です$",
+    )
+    for pattern in patterns:
+        m = re.fullmatch(pattern, text)
+        if m:
+            subject = m.group(1).strip()
+            value = m.group(2).strip(" 、,")
+            if subject and value:
+                return subject, value
+    return None
+
+
+def append_fact_store(
+    path: Path,
+    question: str,
+    answer: str,
+    source: str = "chat-manual",
+) -> bool:
+    """Persist one structured fact extracted from a trusted teaching answer."""
+    parsed = parse_subject_fact(answer)
+    if parsed is None:
+        return False
+
+    subject, value = parsed
+    fp = pair_fingerprint(question, answer)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    existing: set[tuple[str, str, str]] = set()
+    if path.exists():
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            if not raw.strip():
+                continue
+            try:
+                row = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            existing.add((
+                str(row.get("subject", "")).strip().lower(),
+                str(row.get("value", "")).strip().lower(),
+                str(row.get("fingerprint", "")).strip(),
+            ))
+
+    key = (subject.lower(), value.lower(), fp)
+    if key in existing:
+        return False
+
+    row = {
+        "subject": subject,
+        "relation": "is",
+        "value": value,
+        "question": question,
+        "answer": answer,
+        "fingerprint": fp,
+        "source": source,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    with path.open("a", encoding="utf-8") as out:
+        out.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return True
+
+
+def trained_fact_values(
+    fact_store: Path,
+    learning_state: Path,
+    subject: str,
+) -> list[str]:
+    """Return deduplicated fact values whose teaching pair was actually trained."""
+    if not fact_store.exists() or not learning_state.exists():
+        return []
+
+    try:
+        state = json.loads(learning_state.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+
+    trained = {
+        str(x) for x in state.get("trained_fingerprints", [])
+        if str(x)
+    }
+    if not trained:
+        return []
+
+    target = subject.strip().lower()
+    values: list[str] = []
+    seen: set[str] = set()
+    for raw in fact_store.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if str(row.get("subject", "")).strip().lower() != target:
+            continue
+        if str(row.get("fingerprint", "")) not in trained:
+            continue
+        value = str(row.get("value", "")).strip()
+        norm = value.lower()
+        if value and norm not in seen:
+            seen.add(norm)
+            values.append(value)
+    return values
+
+
+def compose_fact_answer(subject: str, values: list[str]) -> str:
+    """Compose Japanese copular facts without asking the LM to invent links."""
+    if not values:
+        return ""
+    if len(values) == 1:
+        return f"{subject}は、{values[0]}である。"
+    if len(values) == 2:
+        return f"{subject}は、{values[0]}であり、{values[1]}である。"
+    head = "、".join(f"{v}であり" for v in values[:-1])
+    return f"{subject}は、{head}、{values[-1]}である。"
 
 
 def append_route_record(
@@ -2083,7 +2207,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.5 Bare Concept Gate")
+    print(" LLM_TRY Chat - v10.6 Compositional Fact Learning")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2110,7 +2234,7 @@ def print_info(
         print("Context policy  : minimal")
         print("Teaching queue  :", args.teaching_queue)
         print("Knowledge queue :", args.knowledge_queue)
-        print("Gate review q   :", args.gate_review_queue)
+        print("Gate review q   :", args.gate_review_queue)\n    print("Fact store      :", args.fact_store)
         print(
             "Concept calib   :",
             CALIBRATION_INFO.get("version", "raw fallback")
@@ -2312,6 +2436,12 @@ def main() -> None:
                 corrected,
                 source="chat-manual",
             )
+            fact_saved = append_fact_store(
+                Path(args.fact_store),
+                question,
+                corrected,
+                source="chat-manual",
+            )
             resolved_knowledge = resolve_route_queue(
                 Path(args.knowledge_queue),
                 question,
@@ -2328,6 +2458,8 @@ def main() -> None:
                 f"question={question}, "
                 f"pairs={learning_log_count(learning_log)}]"
             )
+            if fact_saved:
+                print("[structured fact saved]")
             print()
             continue
 
@@ -2357,6 +2489,12 @@ def main() -> None:
                         corrected,
                         source="chat-manual",
                     )
+                    fact_saved = append_fact_store(
+                        Path(args.fact_store),
+                        last_user_text,
+                        corrected,
+                        source="chat-manual",
+                    )
                     resolved_knowledge = resolve_route_queue(
                         Path(args.knowledge_queue),
                         last_user_text,
@@ -2374,6 +2512,8 @@ def main() -> None:
                         f"[manual learning pair saved; "
                         f"pairs={learning_log_count(learning_log)}]"
                     )
+                    if fact_saved:
+                        print("[structured fact saved]")
             print()
             continue
 
@@ -2478,6 +2618,34 @@ def main() -> None:
             print()
             last_ai_reply = None
             continue
+
+        fact_focus = extract_concept_query_focus(user_text)
+        if not fact_focus:
+            fact_focus = extract_bare_concept_focus(user_text)
+        if fact_focus:
+            fact_values = trained_fact_values(
+                Path(args.fact_store),
+                learning_state,
+                fact_focus,
+            )
+            if len(fact_values) >= 2:
+                composed = compose_fact_answer(fact_focus, fact_values)
+                print(f"AI> {composed}")
+                if args.show_risk:
+                    print(
+                        f"[gate=KNOWN, confidence=1.000, min_tok_conf=1.000, "
+                        f"mean_margin=1.000, agreement=1.000, sem_agreement=1.000, "
+                        f"intent=fact_composition, slots={fact_focus}, "
+                        f"slot_cov=1.00, qa_sim=1.000, prev_sim=-1.000, "
+                        f"agr_th={args.min_agreement:.2f}, context_turns=0, "
+                        f"resolution=ACCEPT, action=compose/facts, "
+                        f"route=trained fact store, reason={len(fact_values)} trained facts]"
+                    )
+                print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
+                print()
+                last_ai_reply = composed
+                history.append((user_text, composed))
+                continue
 
         if args.unknown_rejection:
             promoted_concepts = trained_known_concepts(
