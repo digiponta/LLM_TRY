@@ -533,7 +533,9 @@ def trained_known_concepts(
         if pair_fingerprint(user, answer) not in trained:
             continue
 
-        focus = extract_definition_focus(user)
+        focus = extract_concept_query_focus(user)
+        if not focus:
+            focus = extract_definition_focus(user) or ""
         if focus:
             concepts.add(focus.lower())
 
@@ -1649,17 +1651,9 @@ KNOWN_QUERY_CONCEPTS = {
     "semantic", "セマンティック", "セマンティックデータ",
 }
 
-def pre_generation_unknown_concept(
-    question: str,
-    promoted_concepts: set[str] | None = None,
-) -> tuple[bool, str]:
-    """
-    Question-side lexical concept gate for definition/explanation prompts.
 
-    Returns (is_unknown, focus). This is intentionally conservative and only
-    triggers on explicit concept-query forms so ordinary persona/chat prompts
-    such as '本は好きですか' are unaffected.
-    """
+def extract_concept_query_focus(question: str) -> str:
+    """Extract a concept from the explicit query forms used by the pre-gate."""
     q = question.strip()
     patterns = (
         r"^(.+?)(?:とは)$",
@@ -1671,16 +1665,32 @@ def pre_generation_unknown_concept(
     )
     for pattern in patterns:
         m = re.fullmatch(pattern, q)
-        if not m:
-            continue
-        focus = m.group(1).strip()
-        norm = focus.lower()
-        if norm in KNOWN_QUERY_CONCEPTS:
-            return False, focus
-        if promoted_concepts and norm in promoted_concepts:
-            return False, focus
-        return True, focus
-    return False, ""
+        if m:
+            return m.group(1).strip()
+    return ""
+
+
+def pre_generation_unknown_concept(
+    question: str,
+    promoted_concepts: set[str] | None = None,
+) -> tuple[bool, str]:
+    """
+    Question-side lexical concept gate for definition/explanation prompts.
+
+    Returns (is_unknown, focus). This is intentionally conservative and only
+    triggers on explicit concept-query forms so ordinary persona/chat prompts
+    such as '本は好きですか' are unaffected.
+    """
+    focus = extract_concept_query_focus(question)
+    if not focus:
+        return False, ""
+
+    norm = focus.lower()
+    if norm in KNOWN_QUERY_CONCEPTS:
+        return False, focus
+    if promoted_concepts and norm in promoted_concepts:
+        return False, focus
+    return True, focus
 
 
 def classify_resolution(
@@ -2020,7 +2030,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.1 Stable Gate Baseline")
+    print(" LLM_TRY Chat - v10.2.2 Adaptive Concept Promotion")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
