@@ -2234,7 +2234,8 @@ def print_info(
         print("Context policy  : minimal")
         print("Teaching queue  :", args.teaching_queue)
         print("Knowledge queue :", args.knowledge_queue)
-        print("Gate review q   :", args.gate_review_queue)\n    print("Fact store      :", args.fact_store)
+        print("Gate review q   :", args.gate_review_queue)
+        print("Fact store      :", args.fact_store)
         print(
             "Concept calib   :",
             CALIBRATION_INFO.get("version", "raw fallback")
