@@ -124,6 +124,7 @@ def deduplicate_trusted_rows(
     priority = {
         "chat-approved": 1,
         "chat-manual": 2,
+        "chat-fact": 2,
         "chat-recovery": 3,
     }
     selected: dict[str, Tuple[str, str, str]] = {}
@@ -291,12 +292,14 @@ def main() -> None:
         print("No new trusted learning pairs. Incremental training skipped.")
         raise SystemExit(3)
 
-    manual_rows = [(u, a) for u, a, s in pending_rows if s == "chat-manual"]
-    approved_rows = [(u, a) for u, a, s in pending_rows if s == "chat-approved"]
-    recovery_rows = [(u, a) for u, a, s in pending_rows if s == "chat-recovery"]
+    fact_rows = [(u, a) for u, a, s in pending_rows if s == "chat-fact"]
+    trainable_pending = [row for row in pending_rows if row[2] != "chat-fact"]
+    manual_rows = [(u, a) for u, a, s in trainable_pending if s == "chat-manual"]
+    approved_rows = [(u, a) for u, a, s in trainable_pending if s == "chat-approved"]
+    recovery_rows = [(u, a) for u, a, s in trainable_pending if s == "chat-recovery"]
     auto_rows = [
         (u, a) for u, a, s in new_rows
-        if s not in ("chat-manual", "chat-approved", "chat-recovery")
+        if s not in ("chat-manual", "chat-approved", "chat-recovery", "chat-fact")
     ]
 
     weighted_new_pairs: List[Tuple[str, str]] = []
@@ -308,7 +311,9 @@ def main() -> None:
         weighted_new_pairs.extend([pair] * max(1, args.recovery_weight))
 
     trusted_replay: List[Tuple[str, str]] = []
-    for user, answer, _ in historical_rows:
+    for user, answer, source in historical_rows:
+        if source == "chat-fact":
+            continue
         trusted_replay.extend(
             [(user, answer)] * max(0, args.trusted_replay_weight)
         )
@@ -326,7 +331,7 @@ def main() -> None:
         )
     replay_count = min(
         len(replay),
-        max(0, int(round(len(pending_rows) * args.replay_ratio))),
+        max(0, int(round(len(trainable_pending) * args.replay_ratio))),
     )
     random.shuffle(replay)
     replay_pairs = replay[:replay_count]
@@ -336,6 +341,18 @@ def main() -> None:
 
     pairs = list(weighted_new_pairs) + trusted_replay + weighted_replay + weighted_stability
     random.shuffle(pairs)
+
+    if fact_rows and not trainable_pending:
+        trained_fingerprints.update(
+            pair_fingerprint(user, answer)
+            for user, answer, _ in pending_rows
+        )
+        save_training_state(state_path, trained_fingerprints)
+        print("Fact-only update : True")
+        print("LM training      : skipped")
+        print("State            :", state_path)
+        print("Consumed facts   :", len(fact_rows))
+        raise SystemExit(0)
 
     tokenizer = Tokenizer.load(str(tokenizer_path))
     model, checkpoint = LanguageModel.load_checkpoint(str(base_path), device=device)
@@ -382,6 +399,7 @@ def main() -> None:
     print("Unique trusted  :", len(trusted_rows))
     print("New trusted     :", len(pending_rows))
     print("Prior trusted   :", len(historical_rows), f"(x{args.trusted_replay_weight})")
+    print("Fact new        :", len(fact_rows), "(state-only; excluded from LM loss)")
     print("Manual new      :", len(manual_rows), f"(x{args.manual_weight})")
     print("Approved new    :", len(approved_rows), f"(x{args.manual_weight})")
     print("Recovery new    :", len(recovery_rows), f"(x{args.recovery_weight})")
