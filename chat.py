@@ -2401,7 +2401,7 @@ def main() -> None:
                 tokenizer=tokenizer,
                 current_question=user_text,
                 answer=primary.text,
-                history=history,
+                history=selected_history,
                 contamination_margin=args.history_contamination_margin,
             )
 
