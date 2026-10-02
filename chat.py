@@ -48,6 +48,7 @@ DEFAULT_KNOWLEDGE_QUEUE = "data/knowledge_queue.jsonl"
 DEFAULT_GATE_REVIEW_QUEUE = "data/gate_review_queue.jsonl"
 DEFAULT_ONLINE_MODEL = "model/model-gpu-v1.6.2-online.pt"
 DEFAULT_ONLINE_TRAINER = "online_train.py"
+DEFAULT_RAW_KNOWLEDGE_CORPUS = "data/data-nagato.txt"
 
 USER_PREFIX = "人: "
 AI_PREFIX = "AI: "
@@ -823,6 +824,21 @@ def select_relevant_history(
         return [best]
 
     return []
+
+
+IDENTITY_QUERY_ALIASES = {
+    "貴方は": "あなたは誰ですか",
+    "あなたは": "あなたは誰ですか",
+    "長門": "あなたは誰ですか",
+    "長門有希": "あなたは誰ですか",
+    "長門とは": "あなたは誰ですか",
+    "長門有希とは": "あなたは誰ですか",
+}
+
+
+def normalize_identity_query(question: str) -> str:
+    """Map short identity variants to the stable canonical identity prompt."""
+    return IDENTITY_QUERY_ALIASES.get(question.strip(), question)
 
 
 def build_prompt(
@@ -1723,6 +1739,26 @@ def extract_concept_query_focus(question: str) -> str:
     return ""
 
 
+def raw_corpus_knows_focus(
+    focus: str,
+    corpus_path: str | Path = DEFAULT_RAW_KNOWLEDGE_CORPUS,
+    min_occurrences: int = 2,
+) -> bool:
+    """Return True when a concept is materially present in the local raw corpus.
+
+    This only relaxes the *pre-generation* lexical gate.  The generated answer
+    must still pass the normal confidence/semantic gate.
+    """
+    path = resolve_runtime_path(corpus_path)
+    if not path.exists() or not focus:
+        return False
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return text.count(focus) >= max(1, min_occurrences)
+
+
 def pre_generation_unknown_concept(
     question: str,
     promoted_concepts: set[str] | None = None,
@@ -1755,6 +1791,8 @@ def pre_generation_unknown_concept(
     if norm in KNOWN_QUERY_CONCEPTS:
         return False, focus
     if promoted_concepts and norm in promoted_concepts:
+        return False, focus
+    if raw_corpus_knows_focus(focus):
         return False, focus
     return True, focus
 
@@ -2533,9 +2571,10 @@ def main() -> None:
                 last_ai_reply = None
                 continue
 
+        generation_user_text = normalize_identity_query(user_text)
         prompt, selected_history = build_prompt(
             history=history,
-            user_text=user_text,
+            user_text=generation_user_text,
             history_turns=args.history_turns,
         )
 
