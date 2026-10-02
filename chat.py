@@ -1,7 +1,7 @@
 # chat.py
 #
-# Interactive chat interface for the current LLM_GPU conversational checkpoint.
-# Defaults to the v0.8 cleaned chat model used by the v1.4/v1.5 experiments.
+# Interactive chat interface for the current LLM_TRY conversational checkpoint.
+# Defaults to the v9.4 Nagato SFT model used by the v10.x stable baseline.
 #
 # v1.5.12 additions:
 #   - conservative chat-level Unknown rejection
