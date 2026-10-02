@@ -1675,6 +1675,8 @@ KNOWN_QUERY_CONCEPTS = {
     "コンピュータ",
     "量子力学", "量子コンピュータ",
     "semantic", "セマンティック", "セマンティックデータ",
+    # Persona/identity concepts that are explicitly trained in the Nagato SFT.
+    "長門", "長門有希",
 }
 
 
@@ -1739,6 +1741,17 @@ def pre_generation_unknown_concept(
         return False, ""
 
     norm = focus.lower()
+
+    # Pronouns / conversational identity prompts are not knowledge concepts.
+    # They must reach the normal persona/chat path instead of being rejected
+    # by the lexical concept pre-gate.
+    NON_CONCEPT_FOCI = {
+        "あなた", "貴方", "きみ", "君", "おまえ", "お前",
+        "わたし", "私", "ぼく", "僕",
+    }
+    if focus in NON_CONCEPT_FOCI:
+        return False, focus
+
     if norm in KNOWN_QUERY_CONCEPTS:
         return False, focus
     if promoted_concepts and norm in promoted_concepts:
