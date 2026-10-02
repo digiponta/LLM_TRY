@@ -413,7 +413,7 @@ def parse_subject_fact(answer: str) -> dict[str, str] | None:
 
     condition = ""
     m_cond = re.fullmatch(
-        r"^(?:(.+?)のとき[、,]?\s*)?(.+)$",
+        r"^(?:(.+?)(?:のとき|とき)[、,]?\s*)?(.+)$",
         text,
     )
     if not m_cond:
