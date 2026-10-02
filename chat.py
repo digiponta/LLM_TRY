@@ -49,6 +49,7 @@ DEFAULT_GATE_REVIEW_QUEUE = "data/gate_review_queue.jsonl"
 DEFAULT_ONLINE_MODEL = "model/model-gpu-v1.6.2-online.pt"
 DEFAULT_ONLINE_TRAINER = "online_train.py"
 DEFAULT_RAW_KNOWLEDGE_CORPUS = "data/data-nagato.txt"
+DEFAULT_SEMANTIC_KNOWLEDGE = "data/nagato_semantic_merge_v1086.jsonl"
 
 USER_PREFIX = "人: "
 AI_PREFIX = "AI: "
@@ -1759,6 +1760,44 @@ def raw_corpus_knows_focus(
     return text.count(focus) >= max(1, min_occurrences)
 
 
+def semantic_knowledge_lookup(
+    question: str,
+    knowledge_path: str | Path = DEFAULT_SEMANTIC_KNOWLEDGE,
+) -> tuple[str, str] | None:
+    """Look up a merged semantic answer for an explicit concept query.
+
+    Returns (concept, answer) when the concept is present in the semantic
+    proposition knowledge file.  This is retrieval, not generation.
+    """
+    focus = extract_concept_query_focus(question)
+    if not focus:
+        return None
+
+    path = resolve_runtime_path(knowledge_path)
+    if not path.exists():
+        return None
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    for raw in lines:
+        if not raw.strip():
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+
+        concept = str(row.get("concept", "")).strip()
+        answer = str(row.get("assistant", "")).strip()
+        if concept == focus and answer:
+            return concept, answer
+
+    return None
+
+
 def pre_generation_unknown_concept(
     question: str,
     promoted_concepts: set[str] | None = None,
@@ -2528,6 +2567,47 @@ def main() -> None:
             print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
             print()
             last_ai_reply = None
+            continue
+
+        semantic_hit = semantic_knowledge_lookup(user_text)
+        if semantic_hit is not None:
+            semantic_concept, semantic_answer = semantic_hit
+            print(f"AI> {semantic_answer}")
+            print(
+                f"[gate=KNOWN, confidence=1.000, min_tok_conf=1.000, "
+                f"mean_margin=1.000, agreement=1.000, sem_agreement=1.000, "
+                f"intent=semantic_retrieval, slots={semantic_concept}, "
+                f"slot_cov=1.00, qa_sim=1.000, prev_sim=-1.000, "
+                f"agr_th=0.00, context_turns=0, resolution=ACCEPT, "
+                f"action=none, route=semantic proposition retrieval, "
+                f"reason=merged semantic knowledge hit]"
+            )
+            print("[0 generated probe tokens, retrieval]")
+            print()
+
+            resolved = resolve_teaching_queue(
+                Path(args.teaching_queue),
+                user_text,
+            )
+            if resolved:
+                print(f"[resolved teaching queue entries: {resolved}]")
+            resolved_knowledge = resolve_route_queue(
+                Path(args.knowledge_queue),
+                user_text,
+                "UNKNOWN_KNOWLEDGE",
+            )
+            if resolved_knowledge:
+                print(
+                    f"[resolved knowledge queue entries: {resolved_knowledge}]"
+                )
+
+            history.append((user_text, semantic_answer))
+            last_ai_reply = semantic_answer
+            if learning_enabled:
+                print(
+                    "[learning candidate ready: use /good to approve "
+                    "or /teach TEXT to correct]"
+                )
             continue
 
         if args.unknown_rejection:
