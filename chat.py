@@ -2100,7 +2100,11 @@ def main() -> None:
     args = parse_args()
 
     tokenizer_path = resolve_runtime_path(args.tokenizer)
-    model_path = choose_startup_model(\n        args.model,\n        online_output=args.online_output,\n        learning_state=args.learning_state,\n    )
+    model_path = choose_startup_model(
+        args.model,
+        online_output=args.online_output,
+        learning_state=args.learning_state,
+    )
 
     if not tokenizer_path.exists():
         raise FileNotFoundError(
