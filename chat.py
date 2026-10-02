@@ -2207,7 +2207,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.6 Compositional Fact Learning")
+    print(" LLM_TRY Chat - v10.6.1 Fact/LM Learning Separation")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2431,17 +2431,19 @@ def main() -> None:
                 question,
                 corrected,
             )
+            is_fact = parse_subject_fact(corrected) is not None
+            pair_source = "chat-fact" if is_fact else "chat-manual"
             append_learning_pair(
                 learning_log,
                 question,
                 corrected,
-                source="chat-manual",
+                source=pair_source,
             )
             fact_saved = append_fact_store(
                 Path(args.fact_store),
                 question,
                 corrected,
-                source="chat-manual",
+                source=pair_source,
             )
             resolved_knowledge = resolve_route_queue(
                 Path(args.knowledge_queue),
@@ -2484,17 +2486,19 @@ def main() -> None:
                         last_user_text,
                         corrected,
                     )
+                    is_fact = parse_subject_fact(corrected) is not None
+                    pair_source = "chat-fact" if is_fact else "chat-manual"
                     append_learning_pair(
                         learning_log,
                         last_user_text,
                         corrected,
-                        source="chat-manual",
+                        source=pair_source,
                     )
                     fact_saved = append_fact_store(
                         Path(args.fact_store),
                         last_user_text,
                         corrected,
-                        source="chat-manual",
+                        source=pair_source,
                     )
                     resolved_knowledge = resolve_route_queue(
                         Path(args.knowledge_queue),
