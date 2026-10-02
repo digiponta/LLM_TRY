@@ -345,21 +345,60 @@ def append_learning_pair(
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def parse_subject_fact(answer: str) -> tuple[str, str] | None:
-    """Parse a conservative Japanese copular fact: XはY(である/です)."""
+def parse_subject_fact(answer: str) -> dict[str, str] | None:
+    """Parse a conservative context-aware Japanese copular fact.
+
+    Supported examples:
+      XはYである。
+      条件Aのとき、XはYである。
+      Xの色は赤である。
+      条件Aのとき、Xの色は赤である。
+    """
     text = answer.strip()
     text = re.sub(r"[。．]+$", "", text)
-    patterns = (
-        r"^([^\s。、！？?]{1,32})は、?(.+?)である$",
-        r"^([^\s。、！？?]{1,32})は、?(.+?)です$",
+
+    condition = ""
+    m_cond = re.fullmatch(
+        r"^(?:(.+?)のとき[、,]?\s*)?(.+)$",
+        text,
     )
-    for pattern in patterns:
-        m = re.fullmatch(pattern, text)
-        if m:
-            subject = m.group(1).strip()
-            value = m.group(2).strip(" 、,")
-            if subject and value:
-                return subject, value
+    if not m_cond:
+        return None
+    condition = (m_cond.group(1) or "").strip()
+    body = m_cond.group(2).strip()
+
+    # Attribute relation: XのRはVである/です
+    m_attr = re.fullmatch(
+        r"^([^\s。、！？?]{1,32})の([^\s。、！？?]{1,24})は、?(.+?)(?:である|です)$",
+        body,
+    )
+    if m_attr:
+        subject = m_attr.group(1).strip()
+        relation = m_attr.group(2).strip()
+        value = m_attr.group(3).strip(" 、,")
+        if subject and relation and value:
+            return {
+                "subject": subject,
+                "relation": relation,
+                "value": value,
+                "condition": condition,
+            }
+
+    # Generic copular relation: XはYである/です
+    m_is = re.fullmatch(
+        r"^([^\s。、！？?]{1,32})は、?(.+?)(?:である|です)$",
+        body,
+    )
+    if m_is:
+        subject = m_is.group(1).strip()
+        value = m_is.group(2).strip(" 、,")
+        if subject and value:
+            return {
+                "subject": subject,
+                "relation": "is",
+                "value": value,
+                "condition": condition,
+            }
     return None
 
 
@@ -369,16 +408,19 @@ def append_fact_store(
     answer: str,
     source: str = "chat-manual",
 ) -> bool:
-    """Persist one structured fact extracted from a trusted teaching answer."""
+    """Persist one structured context-aware fact from trusted teaching."""
     parsed = parse_subject_fact(answer)
     if parsed is None:
         return False
 
-    subject, value = parsed
+    subject = parsed["subject"]
+    relation = parsed["relation"]
+    value = parsed["value"]
+    condition = parsed["condition"]
     fp = pair_fingerprint(question, answer)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    existing: set[tuple[str, str, str]] = set()
+    existing: set[tuple[str, str, str, str, str]] = set()
     if path.exists():
         for raw in path.read_text(encoding="utf-8").splitlines():
             if not raw.strip():
@@ -389,18 +431,27 @@ def append_fact_store(
                 continue
             existing.add((
                 str(row.get("subject", "")).strip().lower(),
+                str(row.get("relation", "is")).strip().lower(),
                 str(row.get("value", "")).strip().lower(),
+                str(row.get("condition", "")).strip().lower(),
                 str(row.get("fingerprint", "")).strip(),
             ))
 
-    key = (subject.lower(), value.lower(), fp)
+    key = (
+        subject.lower(),
+        relation.lower(),
+        value.lower(),
+        condition.lower(),
+        fp,
+    )
     if key in existing:
         return False
 
     row = {
         "subject": subject,
-        "relation": "is",
+        "relation": relation,
         "value": value,
+        "condition": condition,
         "question": question,
         "answer": answer,
         "fingerprint": fp,
@@ -412,12 +463,12 @@ def append_fact_store(
     return True
 
 
-def trained_fact_values(
+def trained_facts(
     fact_store: Path,
     learning_state: Path,
     subject: str,
-) -> list[str]:
-    """Return deduplicated fact values whose teaching pair was actually trained."""
+) -> list[dict[str, str]]:
+    """Return trained facts for one subject, including relation and condition."""
     if not fact_store.exists() or not learning_state.exists():
         return []
 
@@ -434,8 +485,8 @@ def trained_fact_values(
         return []
 
     target = subject.strip().lower()
-    values: list[str] = []
-    seen: set[str] = set()
+    facts: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
     for raw in fact_store.read_text(encoding="utf-8").splitlines():
         if not raw.strip():
             continue
@@ -447,16 +498,39 @@ def trained_fact_values(
             continue
         if str(row.get("fingerprint", "")) not in trained:
             continue
-        value = str(row.get("value", "")).strip()
-        norm = value.lower()
-        if value and norm not in seen:
-            seen.add(norm)
-            values.append(value)
-    return values
+
+        fact = {
+            "subject": str(row.get("subject", "")).strip(),
+            "relation": str(row.get("relation", "is")).strip() or "is",
+            "value": str(row.get("value", "")).strip(),
+            "condition": str(row.get("condition", "")).strip(),
+        }
+        key = (
+            fact["relation"].lower(),
+            fact["value"].lower(),
+            fact["condition"].lower(),
+        )
+        if fact["value"] and key not in seen:
+            seen.add(key)
+            facts.append(fact)
+    return facts
+
+
+def trained_fact_values(
+    fact_store: Path,
+    learning_state: Path,
+    subject: str,
+) -> list[str]:
+    """Backward-compatible unconditional/generic fact values for v10.6 tests."""
+    return [
+        fact["value"]
+        for fact in trained_facts(fact_store, learning_state, subject)
+        if fact["relation"] == "is" and not fact["condition"]
+    ]
 
 
 def compose_fact_answer(subject: str, values: list[str]) -> str:
-    """Compose Japanese copular facts without asking the LM to invent links."""
+    """Compose unconditional generic copular facts."""
     if not values:
         return ""
     if len(values) == 1:
@@ -465,6 +539,57 @@ def compose_fact_answer(subject: str, values: list[str]) -> str:
         return f"{subject}は、{values[0]}であり、{values[1]}である。"
     head = "、".join(f"{v}であり" for v in values[:-1])
     return f"{subject}は、{head}、{values[-1]}である。"
+
+
+def compose_context_fact_answer(subject: str, facts: list[dict[str, str]]) -> str:
+    """Render context-aware facts without collapsing different conditions."""
+    if not facts:
+        return ""
+
+    # Preserve v10.6 natural composition for unconditional generic facts.
+    if all(f["relation"] == "is" and not f["condition"] for f in facts):
+        return compose_fact_answer(subject, [f["value"] for f in facts])
+
+    parts: list[str] = []
+    for fact in facts:
+        relation = fact["relation"]
+        value = fact["value"]
+        condition = fact["condition"]
+
+        if relation == "is":
+            body = f"{subject}は{value}である"
+        else:
+            body = f"{subject}の{relation}は{value}である"
+
+        if condition:
+            parts.append(f"{condition}のとき、{body}")
+        else:
+            parts.append(body)
+
+    return "。".join(parts) + "。"
+
+
+def context_conflict_candidates(
+    facts: list[dict[str, str]],
+) -> list[tuple[dict[str, str], dict[str, str]]]:
+    """Return conservative conflict candidates.
+
+    Facts are compared only when subject, relation, and condition are identical.
+    Different explicit conditions coexist and are not treated as conflicts.
+    A differing value is only a candidate; domain-level exclusivity is not
+    inferred here.
+    """
+    conflicts: list[tuple[dict[str, str], dict[str, str]]] = []
+    for i, left in enumerate(facts):
+        for right in facts[i + 1:]:
+            same_scope = (
+                left["subject"].lower() == right["subject"].lower()
+                and left["relation"].lower() == right["relation"].lower()
+                and left["condition"].lower() == right["condition"].lower()
+            )
+            if same_scope and left["value"].lower() != right["value"].lower():
+                conflicts.append((left, right))
+    return conflicts
 
 
 def append_route_record(
@@ -2207,7 +2332,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.6.2 Single/Multi Fact Retrieval")
+    print(" LLM_TRY Chat - v10.7 Context-Aware Fact Learning")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2628,13 +2753,13 @@ def main() -> None:
         if not fact_focus:
             fact_focus = extract_bare_concept_focus(user_text)
         if fact_focus:
-            fact_values = trained_fact_values(
+            fact_rows = trained_facts(
                 Path(args.fact_store),
                 learning_state,
                 fact_focus,
             )
-            if len(fact_values) >= 1:
-                composed = compose_fact_answer(fact_focus, fact_values)
+            if len(fact_rows) >= 1:
+                composed = compose_context_fact_answer(fact_focus, fact_rows)
                 print(f"AI> {composed}")
                 if args.show_risk:
                     print(
@@ -2644,7 +2769,7 @@ def main() -> None:
                         f"slot_cov=1.00, qa_sim=1.000, prev_sim=-1.000, "
                         f"agr_th={args.min_agreement:.2f}, context_turns=0, "
                         f"resolution=ACCEPT, action=compose/facts, "
-                        f"route=trained fact store, reason={len(fact_values)} trained facts]"
+                        f"route=trained fact store, reason={len(fact_rows)} trained facts]"
                     )
                 print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
                 print()
