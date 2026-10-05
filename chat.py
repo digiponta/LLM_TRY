@@ -84,6 +84,9 @@ from semantic_knowledge_architecture_v10110 import (
     SemanticKnowledgeArchitecture,
     SemanticKnowledgeConfig,
 )
+from semantic_knowledge_snapshot_v10111 import (
+    snapshot_semantic_knowledge,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -2342,7 +2345,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.11.0 Semantic Knowledge Architecture")
+    print(" LLM_TRY Chat - v10.11.1 Semantic Knowledge Snapshot")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2467,6 +2470,7 @@ def main() -> None:
     print("  /truths       list explicit truth-state records")
     print("  /truthset X STATE [=> CORRECTION]")
     print("  /semstatus    show Semantic Knowledge Architecture status")
+    print("  /semantic X   inspect all semantic knowledge layers for X")
     print("  /exit         quit")
     print()
 
@@ -2631,6 +2635,122 @@ def main() -> None:
                 f"typed_index={sync.typed_index_count}, "
                 f"unified_subjects={sync.unified_subject_count}]"
             )
+            print()
+            continue
+
+        if command.startswith("/semantic "):
+            concept = user_text[len("/semantic "):].strip()
+            if not concept:
+                print("[usage: /semantic CONCEPT]")
+            else:
+                snapshot = snapshot_semantic_knowledge(
+                    semantic_knowledge,
+                    concept,
+                )
+                result = snapshot.result
+                state = result.knowledge_state
+                dispatch = result.dispatch
+                truth = result.truth
+                truth_result = result.truth_result
+                provenance = result.provenance
+
+                print(
+                    f"[semantic snapshot: concept={snapshot.concept!r}, "
+                    f"query={snapshot.query!r}]"
+                )
+
+                if snapshot.atomic_propositions:
+                    print(
+                        f"  Proposition  : {snapshot.proposition_count} atomic item(s)"
+                    )
+                    for item in snapshot.atomic_propositions:
+                        print(
+                            f"    - {item.subject} => {item.value}"
+                        )
+                else:
+                    print("  Proposition  : none")
+
+                print(
+                    "  Subject Index : "
+                    + (snapshot.subject_answer or "none")
+                )
+
+                if snapshot.typed_rows:
+                    print(
+                        f"  Typed Index   : {snapshot.typed_count} item(s)"
+                    )
+                    for row in snapshot.typed_rows:
+                        print(
+                            f"    - {row.predicate_type}: {row.statement}"
+                        )
+                else:
+                    print("  Typed Index   : none")
+
+                if snapshot.unified_row is not None:
+                    print(
+                        "  Unified Memory: "
+                        + str(snapshot.unified_row.get("assistant", ""))
+                    )
+                    print(
+                        f"    source={snapshot.unified_row.get('source', '')!r}, "
+                        f"updated_at={snapshot.unified_row.get('updated_at', '')!r}"
+                    )
+                else:
+                    print("  Unified Memory: none")
+
+                if snapshot.internalized is not None:
+                    internalized = snapshot.internalized
+                    print(
+                        f"  Internalized : yes, "
+                        f"trained_pairs={internalized.trained_pairs}, "
+                        f"sources={','.join(internalized.sources)}"
+                    )
+                    print(
+                        f"    latest_question={internalized.latest_question!r}"
+                    )
+                else:
+                    print("  Internalized : no")
+
+                if provenance is not None:
+                    print(
+                        f"  Provenance   : {provenance.compact()}"
+                    )
+                else:
+                    print("  Provenance   : none")
+
+                if truth is not None:
+                    runtime_status = (
+                        truth_result.runtime_status
+                        if truth_result is not None
+                        else "-"
+                    )
+                    warning = (
+                        truth_result.warning
+                        if truth_result is not None
+                        else ""
+                    )
+                    print(
+                        f"  Truth State  : {truth.state}, "
+                        f"runtime={runtime_status}, warning={warning!r}"
+                    )
+                    if truth.correction:
+                        print(
+                            f"    correction={truth.correction}"
+                        )
+                else:
+                    print("  Truth State  : none")
+
+                print(
+                    f"  Knowledge    : state={state.state}, "
+                    f"reason={state.reason}"
+                )
+                print(
+                    f"  Final Route  : action={dispatch.action}, "
+                    f"route={dispatch.route}, "
+                    f"reason={dispatch.reason}"
+                )
+                if dispatch.answer:
+                    print(f"  Final Answer : {dispatch.answer}")
             print()
             continue
 
