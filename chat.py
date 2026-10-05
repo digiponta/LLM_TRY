@@ -271,6 +271,15 @@ def parse_args() -> argparse.Namespace:
         help="Minimum mean cosine similarity between probe response vectors.",
     )
     parser.add_argument(
+        "--min-internalized-fidelity",
+        type=float,
+        default=0.90,
+        help=(
+            "Minimum cosine similarity between INTERNALIZED output "
+            "and its trusted teacher answer."
+        ),
+    )
+    parser.add_argument(
         "--semantic-consistency",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -1170,6 +1179,28 @@ def mean_pairwise_semantic_agreement(
         for j in range(i + 1, len(vectors)):
             values.append(float(torch.dot(vectors[i], vectors[j]).item()))
     return sum(values) / len(values) if values else 1.0
+
+
+@torch.no_grad()
+def internalized_teacher_fidelity(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    generated_answer: str,
+    teacher_answer: str,
+) -> float:
+    if not generated_answer.strip() or not teacher_answer.strip():
+        return 0.0
+    generated_vector = semantic_vector(
+        model,
+        tokenizer,
+        generated_answer,
+    )
+    teacher_vector = semantic_vector(
+        model,
+        tokenizer,
+        teacher_answer,
+    )
+    return float(torch.dot(generated_vector, teacher_vector).item())
 
 
 SLOT_ALIASES = {
@@ -2355,7 +2386,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.11.6 Internalized Checkpoint Binding")
+    print(" LLM_TRY Chat - v10.11.7 Internalized Fidelity Gate")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2378,6 +2409,7 @@ def print_info(
         print("Min mean margin :", args.min_mean_margin)
         print("Min agreement   :", args.min_agreement)
         print("Min sem agree   :", args.min_semantic_agreement)
+        print("Min int fidelity:", args.min_internalized_fidelity)
         print("Fallback        :", UNKNOWN_REPLY)
         print("Context policy  : minimal")
         print("Teaching queue  :", args.teaching_queue)
@@ -3736,6 +3768,7 @@ def main() -> None:
                 allow_semantic_rescue=(
                     semantic_ok
                     and slot_coverage >= 1.0
+                    and internalized_record is None
                 ),
             )
         else:
@@ -3749,19 +3782,44 @@ def main() -> None:
                 reason = semantic_reason
             # Preserve diagnostic reasons such as "semantic probe agreement".
 
+        internalized_fidelity = -1.0
+        if internalized_record is not None:
+            internalized_fidelity = internalized_teacher_fidelity(
+                model=model,
+                tokenizer=tokenizer,
+                generated_answer=primary.text,
+                teacher_answer=internalized_record.teacher_answer,
+            )
+            if (
+                accepted
+                and internalized_fidelity
+                < args.min_internalized_fidelity
+            ):
+                accepted = False
+                reason = (
+                    "internalized teacher fidelity "
+                    f"{internalized_fidelity:.3f} < "
+                    f"{args.min_internalized_fidelity:.3f}"
+                )
+
         resolution, action = classify_resolution(
             accepted,
             reason,
             user_text,
         )
-        route_result = route_resolution_action(
-            args=args,
-            resolution=resolution,
-            action=action,
-            user_text=user_text,
-            candidate_answer=primary.text,
-            reason=reason,
-        )
+        if internalized_record is not None and not accepted:
+            resolution = "INTERNALIZED_UNSTABLE"
+            action = "retrain/review"
+            route_result = "internalized fidelity block"
+        else:
+            route_result = route_resolution_action(
+                args=args,
+                resolution=resolution,
+                action=action,
+                user_text=user_text,
+                candidate_answer=primary.text,
+                reason=reason,
+            )
 
         if accepted and internalized_record is not None:
             route_result = "internalized model generation"
@@ -3790,14 +3848,22 @@ def main() -> None:
                 status = "KNOWN" if accepted else "UNKNOWN"
             semantic_part = ""
             internalized_part = (
-                f", internalized_concept={internalized_record.concept}"
+                (
+                    f", internalized_concept={internalized_record.concept}"
+                    f", teacher_fidelity={internalized_fidelity:.3f}"
+                    f", fidelity_th={args.min_internalized_fidelity:.3f}"
+                )
                 if internalized_record is not None
                 else ""
             )
             if args.semantic_consistency:
                 slot_text = "|".join(slots) if slots else "-"
                 internalized_part = (
-                    f", internalized_concept={internalized_record.concept}"
+                    (
+                        f", internalized_concept={internalized_record.concept}"
+                        f", teacher_fidelity={internalized_fidelity:.3f}"
+                        f", fidelity_th={args.min_internalized_fidelity:.3f}"
+                    )
                     if internalized_record is not None
                     else ""
                 )
