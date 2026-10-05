@@ -131,14 +131,9 @@ def resolve_knowledge_state(
     raw_min_occurrences: int = 2,
 ) -> KnowledgeState:
     """Resolve one explicit concept query to one knowledge state."""
-    focus = extract_query_focus(question)
-    if not focus:
-        return KnowledgeState(
-            state="NON_CONCEPT",
-            reason="no explicit concept query",
-        )
 
-    # Typed query has the strongest explicit semantic intent.
+    # Typed questions such as "GPUの性質は" do not necessarily match the
+    # generic concept-query grammar, so typed detection must run first.
     typed_hit = typed_query_lookup(typed_index_path, question)
     if typed_hit is not None:
         subject, predicate_type, answer = typed_hit
@@ -148,6 +143,13 @@ def resolve_knowledge_state(
             answer=answer,
             predicate_type=predicate_type,
             reason="typed predicate query hit",
+        )
+
+    focus = extract_query_focus(question)
+    if not focus:
+        return KnowledgeState(
+            state="NON_CONCEPT",
+            reason="no explicit concept query",
         )
 
     # Generic subject-keyed propositions are also typed semantic knowledge.
