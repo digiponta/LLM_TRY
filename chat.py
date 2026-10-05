@@ -41,6 +41,10 @@ from semantic_proposition_v1090 import (
     compose_subject as compose_semantic_proposition_subject,
     load_propositions as load_semantic_propositions,
 )
+from unified_semantic_bridge_v1090 import (
+    sync_all_propositions,
+    sync_subject_from_propositions,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -2391,6 +2395,7 @@ def main() -> None:
     print("  /propteach S  decompose and persist semantic proposition statement")
     print("  /prop X       compose stored propositions for subject X")
     print("  /props        list atomic semantic propositions")
+    print("  /propsync     sync all atomic propositions to unified semantic memory")
     print("  /exit         quit")
     print()
 
@@ -2398,6 +2403,7 @@ def main() -> None:
     learning_log = Path(args.learning_log)
     learning_state = Path(args.learning_state)
     proposition_path = resolve_runtime_path(args.propositions)
+    unified_semantic_path = resolve_runtime_path(DEFAULT_SEMANTIC_KNOWLEDGE)
     baseline_count = initialize_learning_state_if_missing(
         learning_state,
         learning_log,
@@ -2520,6 +2526,30 @@ def main() -> None:
                     added[0].subject,
                 )
                 print(f"[proposition composed: {rendered}]")
+                synced = sync_subject_from_propositions(
+                    proposition_path,
+                    unified_semantic_path,
+                    added[0].subject,
+                )
+                if synced is not None:
+                    print(
+                        "[unified semantic upsert: "
+                        f"concept={synced.get('concept')!r}, "
+                        f"atomic_count={synced.get('atomic_count')}, "
+                        f"source={synced.get('source')}]"
+                    )
+            print()
+            continue
+
+        if command == "/propsync":
+            synced_count = sync_all_propositions(
+                proposition_path,
+                unified_semantic_path,
+            )
+            print(
+                f"[unified semantic sync: {synced_count} subject(s), "
+                f"path={unified_semantic_path}]"
+            )
             print()
             continue
 
