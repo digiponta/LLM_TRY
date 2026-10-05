@@ -62,6 +62,7 @@ from typed_subject_proposition_v10100 import (
 )
 from internalized_knowledge_v10100 import (
     internalized_record_for_focus,
+    load_internalized_concepts,
     load_internalized_records,
 )
 
@@ -2627,21 +2628,23 @@ def main() -> None:
             continue
 
         if command == "/internalized":
-            records = load_internalized_records(
+            concepts = load_internalized_concepts(
                 learning_log,
                 learning_state,
             )
-            if not records:
-                print("[internalized knowledge: empty]")
+            if not concepts:
+                print("[internalized concepts: empty]")
             else:
                 print(
-                    f"[internalized knowledge: {len(records)} trained item(s)]"
+                    f"[internalized concepts: {len(concepts)} concept(s)]"
                 )
-                for index, record in enumerate(records, 1):
+                for index, concept in enumerate(concepts, 1):
+                    source_text = ",".join(concept.sources)
                     print(
-                        f"  {index:02d}. concept={record.concept!r} "
-                        f"question={record.question!r} "
-                        f"source={record.source}"
+                        f"  {index:02d}. concept={concept.concept!r} "
+                        f"trained_pairs={concept.trained_pairs} "
+                        f"sources={source_text} "
+                        f"latest_question={concept.latest_question!r}"
                     )
             print()
             continue
