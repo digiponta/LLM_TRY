@@ -279,3 +279,137 @@ def typed_index_dict(
         by_type = result.setdefault(row.subject, {})
         by_type.setdefault(row.predicate_type, []).append(row.statement)
     return result
+
+
+def detect_query_predicate_type(question: str) -> str | None:
+    """Detect which predicate type a question requests.
+
+    This is intentionally conservative. A type is returned only when an
+    explicit Japanese cue is present.
+    """
+    q = re.sub(r"\s+", "", str(question).strip())
+
+    relation_cues = (
+        "の関係",
+        "との関係",
+        "とどう関係",
+        "何を利用",
+        "何に依存",
+        "何と接続",
+        "何を含む",
+    )
+    if any(cue in q for cue in relation_cues):
+        return "relation"
+
+    capability_cues = (
+        "何が得意",
+        "何を得意",
+        "何ができる",
+        "何をできる",
+        "できること",
+        "の能力",
+        "の機能",
+    )
+    if any(cue in q for cue in capability_cues):
+        return "capability"
+
+    property_cues = (
+        "の性質",
+        "の特徴",
+        "どんな性質",
+        "どんな特徴",
+        "特徴は",
+        "性質は",
+    )
+    if any(cue in q for cue in property_cues):
+        return "property"
+
+    definition_cues = (
+        "とは",
+        "の定義",
+        "を定義",
+        "って何",
+    )
+    if any(cue in q for cue in definition_cues):
+        return "definition"
+
+    return None
+
+
+def detect_typed_subject(
+    typed_index_path: Path,
+    question: str,
+) -> str:
+    """Find the longest indexed subject explicitly mentioned in the question."""
+    q = str(question).strip()
+    subjects = sorted(
+        {row.subject for row in load_typed_index(typed_index_path)},
+        key=len,
+        reverse=True,
+    )
+    for subject in subjects:
+        if subject and subject in q:
+            return subject
+    return ""
+
+
+def typed_rows_by_type(
+    typed_index_path: Path,
+    subject: str,
+    predicate_type: str,
+) -> List[TypedSubjectStatement]:
+    target_type = normalize_predicate_type(predicate_type)
+    return [
+        row for row in typed_subject_rows(typed_index_path, subject)
+        if row.predicate_type == target_type
+    ]
+
+
+def compose_typed_rows(
+    rows: Iterable[TypedSubjectStatement],
+) -> str:
+    items = list(rows)
+    if not items:
+        return ""
+
+    subject = items[0].subject
+    values: List[str] = []
+    for row in items:
+        if row.subject != subject:
+            raise ValueError("compose_typed_rows requires one subject")
+        if row.value not in values:
+            values.append(row.value)
+
+    if len(values) == 1:
+        return f"{subject}は、{values[0]}である。"
+
+    return (
+        f"{subject}は、"
+        + "であり、".join(values[:-1])
+        + f"であり、{values[-1]}である。"
+    )
+
+
+def typed_query_lookup(
+    typed_index_path: Path,
+    question: str,
+) -> tuple[str, str, str] | None:
+    """Return (subject, predicate_type, composed answer) for typed questions."""
+    predicate_type = detect_query_predicate_type(question)
+    if predicate_type is None:
+        return None
+
+    subject = detect_typed_subject(typed_index_path, question)
+    if not subject:
+        return None
+
+    rows = typed_rows_by_type(
+        typed_index_path,
+        subject,
+        predicate_type,
+    )
+    answer = compose_typed_rows(rows)
+    if not answer:
+        return None
+
+    return subject, predicate_type, answer
