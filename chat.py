@@ -2798,10 +2798,32 @@ def main() -> None:
                     canonical_definitions=CANONICAL_DEFINITIONS,
                 )
                 dispatch = dispatch_knowledge_state(state)
+                truth_record = None
+                truth_result = None
+                if dispatch.focus and dispatch.state != "UNKNOWN":
+                    truth_record = effective_truth_record(
+                        truth_store_path,
+                        dispatch.focus,
+                    )
+                    truth_result = apply_truth_policy(
+                        dispatch,
+                        truth_record,
+                    )
+                    dispatch = truth_result.dispatch
                 provenance_text = (
                     dispatch.provenance.compact()
                     if dispatch.provenance is not None
                     else "none"
+                )
+                truth_text = (
+                    truth_record.state
+                    if truth_record is not None
+                    else "-"
+                )
+                warning_text = (
+                    truth_result.warning
+                    if truth_result is not None
+                    else ""
                 )
                 print(
                     f"[dispatch action={dispatch.action}, "
@@ -2811,6 +2833,8 @@ def main() -> None:
                     f"terminal={dispatch.is_terminal}, "
                     f"route={dispatch.route}, "
                     f"reason={dispatch.reason}, "
+                    f"truth_state={truth_text}, "
+                    f"truth_warning={warning_text!r}, "
                     f"provenance={provenance_text}]"
                 )
                 if dispatch.answer:
@@ -3498,6 +3522,11 @@ def main() -> None:
                     f", prev_sim={previous_similarity:.3f}"
                     f", agr_th={effective_agreement:.2f}"
                 )
+            truth_part = (
+                f", truth_state={truth_record.state}"
+                if truth_record is not None
+                else ""
+            )
             print(
                 f"[gate={status}, "
                 f"confidence={confidence:.3f}, "
@@ -3506,7 +3535,8 @@ def main() -> None:
                 f"agreement={agreement:.3f}, "
                 f"sem_agreement={semantic_agreement:.3f}"
                 f"{semantic_part}"
-                f"{internalized_part}, "
+                f"{internalized_part}"
+                f"{truth_part}, "
                 f"context_turns={len(selected_history)}, "
                 f"resolution={resolution}, action={action}, "
                 f"route={route_result}, reason={reason}]"
