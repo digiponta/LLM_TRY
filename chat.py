@@ -91,6 +91,12 @@ from knowledge_promotion_v10114 import (
     pending_knowledge_requests,
     promote_knowledge,
 )
+from knowledge_queue_lifecycle_v10115 import (
+    consolidate_legacy_resolved,
+    lifecycle_summary,
+    mark_concept_verified,
+    revoke_concept_verification,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -2349,7 +2355,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.11.4 Knowledge Promotion Pipeline")
+    print(" LLM_TRY Chat - v10.11.5 Knowledge Queue Lifecycle Consolidation")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2476,6 +2482,7 @@ def main() -> None:
     print("  /semstatus    show Semantic Knowledge Architecture status")
     print("  /semantic X   inspect all semantic knowledge layers for X")
     print("  /promotions   list pending UNKNOWN_KNOWLEDGE requests")
+    print("  /promotionstatus show pending/promoted/verified lifecycle counts")
     print("  /promote X => STATEMENT  promote pending concept to semantic knowledge")
     print("  /exit         quit")
     print()
@@ -2506,6 +2513,16 @@ def main() -> None:
             canonical_definitions=CANONICAL_DEFINITIONS,
         )
     )
+    migrated_legacy_queue = consolidate_legacy_resolved(
+        Path(args.knowledge_queue)
+    )
+    if migrated_legacy_queue:
+        print(
+            f"[knowledge queue lifecycle: migrated "
+            f"{migrated_legacy_queue} legacy resolved row(s)]"
+        )
+        print()
+
     baseline_count = initialize_learning_state_if_missing(
         learning_state,
         learning_log,
@@ -2640,6 +2657,22 @@ def main() -> None:
                 f"subject_index={sync.subject_index_count}, "
                 f"typed_index={sync.typed_index_count}, "
                 f"unified_subjects={sync.unified_subject_count}]"
+            )
+            print()
+            continue
+
+        if command == "/promotionstatus":
+            summary = lifecycle_summary(
+                Path(args.knowledge_queue)
+            )
+            print(
+                f"[knowledge queue lifecycle: "
+                f"pending={summary.pending}, "
+                f"promoted={summary.promoted}, "
+                f"verified={summary.verified}, "
+                f"legacy_resolved={summary.legacy_resolved}, "
+                f"other={summary.other}, "
+                f"total={summary.total}]"
             )
             print()
             continue
@@ -2904,6 +2937,31 @@ def main() -> None:
                         f"correction={record.correction!r}, "
                         f"updated_at={record.updated_at!r}]"
                     )
+                    if state_name == "TRUE":
+                        verified_count = mark_concept_verified(
+                            Path(args.knowledge_queue),
+                            concept,
+                            truth_source="chat-manual-truth",
+                        )
+                        if verified_count:
+                            print(
+                                f"[knowledge queue verified: "
+                                f"concept={concept!r}, "
+                                f"entries={verified_count}]"
+                            )
+                    else:
+                        revoked_count = revoke_concept_verification(
+                            Path(args.knowledge_queue),
+                            concept,
+                            new_truth_state=state_name,
+                        )
+                        if revoked_count:
+                            print(
+                                f"[knowledge queue verification revoked: "
+                                f"concept={concept!r}, "
+                                f"entries={revoked_count}, "
+                                f"truth_state={state_name}]"
+                            )
             print()
             continue
 
@@ -3178,15 +3236,6 @@ def main() -> None:
                 corrected,
                 source="chat-manual",
             )
-            resolved_knowledge = resolve_route_queue(
-                Path(args.knowledge_queue),
-                question,
-                "UNKNOWN_KNOWLEDGE",
-            )
-            if resolved_knowledge:
-                print(
-                    f"[resolved knowledge queue entries: {resolved_knowledge}]"
-                )
             if reactivated:
                 print("[previously trained pair reactivated for retraining]")
             print(
@@ -3223,15 +3272,6 @@ def main() -> None:
                         corrected,
                         source="chat-manual",
                     )
-                    resolved_knowledge = resolve_route_queue(
-                        Path(args.knowledge_queue),
-                        last_user_text,
-                        "UNKNOWN_KNOWLEDGE",
-                    )
-                    if resolved_knowledge:
-                        print(
-                            f"[resolved knowledge queue entries: {resolved_knowledge}]"
-                        )
                     if reactivated:
                         print(
                             "[previously trained pair reactivated for retraining]"
@@ -3420,17 +3460,6 @@ def main() -> None:
             )
             if resolved:
                 print(f"[resolved teaching queue entries: {resolved}]")
-            resolved_knowledge = resolve_route_queue(
-                Path(args.knowledge_queue),
-                resolver_query,
-                "UNKNOWN_KNOWLEDGE",
-            )
-            if resolved_knowledge:
-                print(
-                    f"[resolved knowledge queue entries: "
-                    f"{resolved_knowledge}]"
-                )
-
             history.append((resolver_query, dispatch.answer))
             last_ai_reply = dispatch.answer
             continue
