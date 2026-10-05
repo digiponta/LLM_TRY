@@ -2733,7 +2733,7 @@ def main() -> None:
                 print(
                     f"[knowledge promoted: concept={concept!r}, "
                     f"atomic={len(promotion.propositions)}, "
-                    f"queue_resolved={promotion.queue_resolved}, "
+                    f"queue_promoted={promotion.queue_promoted}, "
                     f"post_state={post.state if post else '-'}, "
                     f"post_action={post.action if post else '-'}, "
                     f"truth_state={truth_state or '-'}]"
