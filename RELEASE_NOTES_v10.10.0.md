@@ -235,3 +235,67 @@ Expected final statuses:
 INTERNALIZED_REGISTRY_PASS
 INTERNALIZED_ROUTE_PASS
 ~~~
+
+
+## Internalized Registry Consolidation
+
+The fingerprint-level internalized registry is now exposed through a
+concept-level consolidated view.
+
+Before:
+
+~~~text
+宇宙
+文学
+架空装置
+架空装置
+文学
+文学
+文学
+量子センサー
+~~~
+
+After consolidation:
+
+~~~text
+宇宙          trained_pairs=1
+文学          trained_pairs=4
+架空装置      trained_pairs=2
+量子センサー  trained_pairs=1
+~~~
+
+Each consolidated concept retains:
+
+~~~text
+concept
+latest_question
+latest_teacher_answer
+latest_source
+fingerprints[]
+sources[]
+trained_pairs
+~~~
+
+Fingerprint-level evidence is preserved for auditability. Consolidation affects
+the registry view only and does not change the runtime proof requirement for an
+INTERNALIZED route.
+
+The chat command:
+
+~~~text
+/internalized
+~~~
+
+now reports one row per concept.
+
+### Verification
+
+~~~powershell
+python .\run_internalized_consolidation_v10100.py
+~~~
+
+Expected final status:
+
+~~~text
+INTERNALIZED_CONSOLIDATION_PASS
+~~~
