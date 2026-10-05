@@ -71,6 +71,15 @@ from knowledge_state_resolver_v10100 import (
 from knowledge_state_dispatcher_v10101 import (
     dispatch_knowledge_state,
 )
+from truth_state_v10103 import (
+    TRUTH_STATES,
+    effective_truth_record,
+    load_truth_records,
+    upsert_truth_record,
+)
+from truth_aware_dispatch_v10103 import (
+    apply_truth_policy,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -89,6 +98,7 @@ DEFAULT_SEMANTIC_KNOWLEDGE = "data/unified_semantic_memory_v1090.jsonl"
 DEFAULT_PROPOSITION_STORE = "data/semantic_propositions_v1090.jsonl"
 DEFAULT_SUBJECT_INDEX = "data/subject_keyed_propositions_v1090.jsonl"
 DEFAULT_TYPED_SUBJECT_INDEX = "data/typed_subject_propositions_v10100.jsonl"
+DEFAULT_TRUTH_STORE = "data/truth_state_v10103.jsonl"
 
 USER_PREFIX = "人: "
 AI_PREFIX = "AI: "
@@ -167,6 +177,11 @@ def parse_args() -> argparse.Namespace:
         "--typed-subject-index",
         default=DEFAULT_TYPED_SUBJECT_INDEX,
         help="Derived Subject => Predicate Type => Statement index.",
+    )
+    parser.add_argument(
+        "--truth-store",
+        default=DEFAULT_TRUTH_STORE,
+        help="Persistent concept truth-state overlay.",
     )
     parser.add_argument(
         "--learn",
@@ -2444,6 +2459,9 @@ def main() -> None:
     print("  /kstate Q     inspect resolved knowledge state for query Q")
     print("  /dispatch Q   inspect dispatcher action for query Q")
     print("  /provenance Q inspect source/origin evidence for query Q")
+    print("  /truth X      inspect effective truth state for concept X")
+    print("  /truths       list explicit truth-state records")
+    print("  /truthset X STATE [=> CORRECTION]")
     print("  /exit         quit")
     print()
 
@@ -2456,6 +2474,7 @@ def main() -> None:
     typed_subject_index_path = resolve_runtime_path(
         args.typed_subject_index
     )
+    truth_store_path = resolve_runtime_path(args.truth_store)
     baseline_count = initialize_learning_state_if_missing(
         learning_state,
         learning_log,
@@ -2633,6 +2652,88 @@ def main() -> None:
                 f"[unified semantic sync: {synced_count} subject(s), "
                 f"path={unified_semantic_path}]"
             )
+            print()
+            continue
+
+        if command == "/truths":
+            records = load_truth_records(truth_store_path)
+            if not records:
+                print("[truth states: empty; unresolved concepts default to UNVERIFIED]")
+            else:
+                print(f"[truth states: {len(records)} explicit record(s)]")
+                for index, record in enumerate(records, 1):
+                    correction = (
+                        f" correction={record.correction!r}"
+                        if record.correction
+                        else ""
+                    )
+                    print(
+                        f"  {index:02d}. concept={record.concept!r} "
+                        f"state={record.state} source={record.source} "
+                        f"updated_at={record.updated_at!r}"
+                        f"{correction}"
+                    )
+            print()
+            continue
+
+        if command.startswith("/truthset "):
+            payload = user_text[len("/truthset "):].strip()
+            left, sep, correction = payload.partition("=>")
+            parts = left.strip().split()
+            if len(parts) < 2:
+                print(
+                    "[usage: /truthset CONCEPT "
+                    "TRUE|FALSE|UNVERIFIED|CONTESTED|OUTDATED "
+                    "[=> CORRECTION]]"
+                )
+            else:
+                concept = parts[0].strip()
+                state_name = parts[1].strip().upper()
+                if state_name not in TRUTH_STATES:
+                    print(
+                        "[invalid truth state: "
+                        + state_name
+                        + "; expected "
+                        + "|".join(TRUTH_STATES)
+                        + "]"
+                    )
+                else:
+                    record = upsert_truth_record(
+                        truth_store_path,
+                        concept,
+                        state_name,
+                        correction=(correction.strip() if sep else ""),
+                        source="chat-manual-truth",
+                    )
+                    print(
+                        f"[truth state saved: concept={record.concept!r}, "
+                        f"state={record.state}, "
+                        f"correction={record.correction!r}, "
+                        f"updated_at={record.updated_at!r}]"
+                    )
+            print()
+            continue
+
+        if command.startswith("/truth "):
+            concept = user_text[len("/truth "):].strip()
+            if not concept:
+                print("[usage: /truth CONCEPT]")
+            else:
+                record = effective_truth_record(
+                    truth_store_path,
+                    concept,
+                )
+                explicit = (
+                    record.source != "truth-default"
+                )
+                print(
+                    f"[truth concept={record.concept!r}, "
+                    f"state={record.state}, explicit={explicit}, "
+                    f"source={record.source!r}, "
+                    f"updated_at={record.updated_at!r}, "
+                    f"reason={record.reason!r}, "
+                    f"correction={record.correction!r}]"
+                )
             print()
             continue
 
@@ -3074,6 +3175,25 @@ def main() -> None:
         )
         dispatch = dispatch_knowledge_state(knowledge_state)
 
+        truth_result = None
+        truth_record = None
+        if dispatch.focus and dispatch.state != "UNKNOWN":
+            truth_record = effective_truth_record(
+                truth_store_path,
+                dispatch.focus,
+            )
+            truth_result = apply_truth_policy(
+                dispatch,
+                truth_record,
+            )
+            dispatch = truth_result.dispatch
+            if truth_result.warning:
+                print(
+                    f"[truth warning: state={truth_record.state}, "
+                    f"concept={truth_record.concept!r}, "
+                    f"message={truth_result.warning}]"
+                )
+
         if dispatch.action == "RETRIEVE":
             print(f"AI> {dispatch.answer}")
             predicate_part = (
@@ -3086,11 +3206,23 @@ def main() -> None:
                 if dispatch.provenance is not None
                 else "none"
             )
+            truth_part = (
+                f", truth_state={truth_record.state}"
+                if truth_record is not None
+                else ""
+            )
+            correction_part = (
+                ", truth_correction=True"
+                if truth_result is not None
+                and truth_result.correction_applied
+                else ""
+            )
             print(
                 f"[gate=KNOWN, knowledge_state={dispatch.state}, "
                 f"concept={dispatch.focus}{predicate_part}, "
                 f"route={dispatch.route}, reason={dispatch.reason}, "
-                f"provenance={provenance_text}]"
+                f"provenance={provenance_text}"
+                f"{truth_part}{correction_part}]"
             )
             print("[0 generated probe tokens, retrieval]")
             print()
@@ -3143,10 +3275,16 @@ def main() -> None:
                 if dispatch.provenance is not None
                 else "none"
             )
+            truth_part = (
+                f", truth_state={truth_record.state}"
+                if truth_record is not None
+                else ""
+            )
             print(
                 "[gate=UNKNOWN, resolution=UNKNOWN_KNOWLEDGE, "
                 "action=retrieve/teach, route=knowledge-state-dispatcher, "
-                f"reason={dispatch.reason}, provenance={provenance_text}]"
+                f"reason={dispatch.reason}, provenance={provenance_text}"
+                f"{truth_part}]"
             )
             print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
             print()
@@ -3166,7 +3304,8 @@ def main() -> None:
             print(
                 "[internalized route: "
                 f"concept={dispatch.focus!r}, "
-                "generation=model-weights]"
+                "generation=model-weights, "
+                f"truth_state={truth_record.state if truth_record else 'UNVERIFIED'}]"
             )
         else:
             internalized_record = None
