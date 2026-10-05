@@ -4214,8 +4214,14 @@ def main() -> None:
                 internalized_part = (
                     (
                         f", internalized_concept={internalized_record.concept}"
-                        f", teacher_fidelity={internalized_fidelity:.3f}"
+                        f", teacher_sem={internalized_fidelity:.3f}"
+                        f", teacher_lex={internalized_lexical_coverage:.3f}"
+                        f", teacher_req={internalized_required_coverage:.3f}"
+                        f", teacher_contra={internalized_contradiction}"
                         f", fidelity_th={args.min_internalized_fidelity:.3f}"
+                        f", lex_th={args.min_internalized_lexical_coverage:.3f}"
+                        f", req_th={args.min_internalized_required_coverage:.3f}"
+                        f", missing={'|'.join(internalized_missing_terms) or '-'}"
                     )
                     if internalized_record is not None
                     else ""
