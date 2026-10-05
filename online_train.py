@@ -161,6 +161,24 @@ def save_training_state(path: Path, fingerprints: set[str]) -> None:
         encoding="utf-8",
     )
 
+
+def checkpoint_trained_fingerprints(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        payload = torch.load(path, map_location="cpu")
+    except Exception:
+        return set()
+    metadata = payload.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return set()
+    values = metadata.get("trained_fingerprints", [])
+    if not isinstance(values, (list, tuple, set)):
+        return set()
+    return {str(value) for value in values}
+
+
+
 def load_replay_pairs(path: Path) -> List[Tuple[str, str]]:
     if not path.exists():
         return []
@@ -276,15 +294,16 @@ def main() -> None:
 
     state_path = Path(args.state)
     trained_fingerprints = load_training_state(state_path)
+    checkpoint_fingerprints = checkpoint_trained_fingerprints(base_path)
     trusted_rows = deduplicate_trusted_rows(new_rows)
 
     pending_rows = [
         row for row in trusted_rows
-        if pair_fingerprint(row[0], row[1]) not in trained_fingerprints
+        if pair_fingerprint(row[0], row[1]) not in checkpoint_fingerprints
     ]
     historical_rows = [
         row for row in trusted_rows
-        if pair_fingerprint(row[0], row[1]) in trained_fingerprints
+        if pair_fingerprint(row[0], row[1]) in checkpoint_fingerprints
     ]
 
     if not pending_rows:
@@ -380,7 +399,9 @@ def main() -> None:
     print("Base loss       :", checkpoint.get("loss"))
     print("Chat log rows   :", len(new_rows))
     print("Unique trusted  :", len(trusted_rows))
-    print("New trusted     :", len(pending_rows))
+    print("State trained   :", len(trained_fingerprints))
+    print("Checkpoint bound:", len(checkpoint_fingerprints))
+    print("New/rebind      :", len(pending_rows))
     print("Prior trusted   :", len(historical_rows), f"(x{args.trusted_replay_weight})")
     print("Manual new      :", len(manual_rows), f"(x{args.manual_weight})")
     print("Approved new    :", len(approved_rows), f"(x{args.manual_weight})")
@@ -510,11 +531,23 @@ def main() -> None:
             )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    consumed_fingerprints = set(checkpoint_fingerprints)
+    consumed_fingerprints.update(
+        pair_fingerprint(user, answer)
+        for user, answer, _ in pending_rows
+    )
+
     model.save_checkpoint(
         str(output_path),
         optimizer=optimizer,
         epoch=best_epoch,
         loss=best_val,
+        metadata={
+            "knowledge_binding_version": "v10.11.6",
+            "trained_fingerprints": sorted(consumed_fingerprints),
+            "base_model": str(base_path),
+            "chat_data": str(chat_path),
+        },
     )
 
     trained_fingerprints.update(
