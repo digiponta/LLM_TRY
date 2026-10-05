@@ -41,6 +41,7 @@ class InternalizedRecord:
     teacher_answer: str
     fingerprint: str
     source: str
+    timestamp: str = ""
 
 
 def normalize_pair_text(text: str) -> str:
@@ -102,6 +103,7 @@ def load_internalized_records(
             continue
 
         source = str(row.get("source", "")).strip()
+        timestamp = str(row.get("timestamp", "")).strip()
         if source not in TRUSTED_SOURCES:
             continue
 
@@ -130,6 +132,7 @@ def load_internalized_records(
                 teacher_answer=answer,
                 fingerprint=fingerprint,
                 source=source,
+                timestamp=timestamp,
             )
         )
 
@@ -165,6 +168,7 @@ class InternalizedConcept:
     fingerprints: tuple[str, ...]
     sources: tuple[str, ...]
     trained_pairs: int
+    latest_timestamp: str = ""
 
 
 def consolidate_internalized_records(
@@ -198,6 +202,7 @@ def consolidate_internalized_records(
                 fingerprints=tuple(fingerprints),
                 sources=tuple(sources),
                 trained_pairs=len(fingerprints),
+                latest_timestamp=latest.timestamp,
             )
         )
 
