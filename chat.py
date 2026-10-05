@@ -2438,6 +2438,7 @@ def main() -> None:
     print("  /typedsubject X show X => predicate type => statement")
     print("  /typedsubjects list typed subject proposition index")
     print("  /internalized list concepts proven consumed by /train")
+    print("  /kstate Q     inspect resolved knowledge state for query Q")
     print("  /exit         quit")
     print()
 
@@ -2627,6 +2628,36 @@ def main() -> None:
                 f"[unified semantic sync: {synced_count} subject(s), "
                 f"path={unified_semantic_path}]"
             )
+            print()
+            continue
+
+        if command.startswith("/kstate "):
+            query = user_text[len("/kstate "):].strip()
+            if not query:
+                print("[usage: /kstate QUERY]")
+            else:
+                state = resolve_knowledge_state(
+                    query,
+                    typed_index_path=typed_subject_index_path,
+                    subject_index_path=subject_index_path,
+                    unified_path=unified_semantic_path,
+                    learning_log=learning_log,
+                    learning_state=learning_state,
+                    raw_corpus_path=resolve_runtime_path(
+                        DEFAULT_RAW_KNOWLEDGE_CORPUS
+                    ),
+                    canonical_definitions=CANONICAL_DEFINITIONS,
+                )
+                print(
+                    f"[knowledge-state={state.state}, "
+                    f"focus={state.focus!r}, "
+                    f"predicate_type={state.predicate_type!r}, "
+                    f"retrieval={state.is_retrieval}, "
+                    f"model_generation={state.permits_model_generation}, "
+                    f"reason={state.reason}]"
+                )
+                if state.answer:
+                    print(f"[resolved answer: {state.answer}]")
             print()
             continue
 
