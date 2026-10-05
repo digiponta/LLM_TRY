@@ -30,8 +30,7 @@ def main() -> None:
     check(
         "typed-retrieve",
         typed.action == "RETRIEVE"
-        and typed.answer == "GPUは高速である."
-            .replace(".", "。")
+        and typed.answer == "GPUは高速である。"
         and typed.predicate_type == "property",
         str(typed),
     )
