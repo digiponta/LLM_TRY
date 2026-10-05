@@ -2466,6 +2466,7 @@ def main() -> None:
     print("  /truth X      inspect effective truth state for concept X")
     print("  /truths       list explicit truth-state records")
     print("  /truthset X STATE [=> CORRECTION]")
+    print("  /semstatus    show Semantic Knowledge Architecture status")
     print("  /exit         quit")
     print()
 
@@ -2595,10 +2596,7 @@ def main() -> None:
 
         if command.startswith("/propteach "):
             statement = user_text[len("/propteach "):].strip()
-            added = add_semantic_proposition_statement(
-                proposition_path,
-                statement,
-            )
+            added = semantic_knowledge.teach_proposition(statement)
             if not added:
                 print(
                     "[proposition teaching rejected: expected "
@@ -2606,7 +2604,7 @@ def main() -> None:
                 )
             else:
                 print(
-                    f"[proposition decomposed: {len(added)} atomic item(s)]"
+                    f"[semantic knowledge teach: {len(added)} atomic item(s)]"
                 )
                 for item in added:
                     print(
@@ -2617,61 +2615,38 @@ def main() -> None:
                     added[0].subject,
                 )
                 print(f"[proposition composed: {rendered}]")
-                subject_index_count = sync_subject_index(
-                    proposition_path,
-                    subject_index_path,
-                )
-                typed_index_count = sync_typed_index(
-                    proposition_path,
-                    typed_subject_index_path,
-                )
                 print(
-                    f"[subject index rebuilt: {subject_index_count} statement(s)]"
+                    "[semantic layers synchronized: "
+                    "proposition -> subject -> typed -> unified]"
                 )
-                print(
-                    f"[typed index rebuilt: {typed_index_count} statement(s)]"
-                )
-                synced = sync_subject_from_propositions(
-                    proposition_path,
-                    unified_semantic_path,
-                    added[0].subject,
-                )
-                if synced is not None:
-                    print(
-                        "[unified semantic upsert: "
-                        f"concept={synced.get('concept')!r}, "
-                        f"atomic_count={synced.get('atomic_count')}, "
-                        f"predicate_types={synced.get('predicate_types')}, "
-                        f"source={synced.get('source')}]"
-                    )
             print()
             continue
 
         if command == "/propsync":
-            subject_index_count = sync_subject_index(
-                proposition_path,
-                subject_index_path,
-            )
-            typed_index_count = sync_typed_index(
-                proposition_path,
-                typed_subject_index_path,
-            )
-            synced_count = sync_all_propositions(
-                proposition_path,
-                unified_semantic_path,
-            )
+            sync = semantic_knowledge.sync_all()
             print(
-                f"[subject index sync: {subject_index_count} statement(s), "
-                f"path={subject_index_path}]"
+                f"[semantic knowledge sync: "
+                f"atomic={sync.atomic_count}, "
+                f"subject_index={sync.subject_index_count}, "
+                f"typed_index={sync.typed_index_count}, "
+                f"unified_subjects={sync.unified_subject_count}]"
             )
+            print()
+            continue
+
+        if command == "/semstatus":
+            status = semantic_knowledge.status()
             print(
-                f"[typed index sync: {typed_index_count} statement(s), "
-                f"path={typed_subject_index_path}]"
+                f"[semantic knowledge architecture: "
+                f"version={status['version']}, "
+                f"layers={','.join(status['layers'])}]"
             )
-            print(
-                f"[unified semantic sync: {synced_count} subject(s), "
-                f"path={unified_semantic_path}]"
-            )
+            print(f"  proposition : {status['proposition_path']}")
+            print(f"  subject     : {status['subject_index_path']}")
+            print(f"  typed       : {status['typed_index_path']}")
+            print(f"  unified     : {status['unified_path']}")
+            print(f"  internalized: {status['learning_log']}")
+            print(f"  truth       : {status['truth_store_path']}")
             print()
             continue
 
