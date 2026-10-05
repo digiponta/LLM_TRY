@@ -45,6 +45,13 @@ from unified_semantic_bridge_v1090 import (
     sync_all_propositions,
     sync_subject_from_propositions,
 )
+from subject_keyed_proposition_v1090 import (
+    compose_subject_from_index,
+    load_subject_index,
+    subject_index_dict,
+    subject_mapping,
+    sync_subject_index,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -61,6 +68,7 @@ DEFAULT_ONLINE_TRAINER = "online_train.py"
 DEFAULT_RAW_KNOWLEDGE_CORPUS = "data/data-nagato.txt"
 DEFAULT_SEMANTIC_KNOWLEDGE = "data/unified_semantic_memory_v1090.jsonl"
 DEFAULT_PROPOSITION_STORE = "data/semantic_propositions_v1090.jsonl"
+DEFAULT_SUBJECT_INDEX = "data/subject_keyed_propositions_v1090.jsonl"
 
 USER_PREFIX = "人: "
 AI_PREFIX = "AI: "
@@ -129,6 +137,11 @@ def parse_args() -> argparse.Namespace:
         "--propositions",
         default=DEFAULT_PROPOSITION_STORE,
         help="Persistent atomic semantic proposition store.",
+    )
+    parser.add_argument(
+        "--subject-index",
+        default=DEFAULT_SUBJECT_INDEX,
+        help="Derived subject-keyed semantic proposition index.",
     )
     parser.add_argument(
         "--learn",
@@ -2314,6 +2327,7 @@ def print_info(
         print("Knowledge queue :", args.knowledge_queue)
         print("Gate review q   :", args.gate_review_queue)
         print("Proposition db  :", args.propositions)
+        print("Subject index   :", args.subject_index)
         print(
             "Concept calib   :",
             CALIBRATION_INFO.get("version", "raw fallback")
@@ -2396,6 +2410,8 @@ def main() -> None:
     print("  /prop X       compose stored propositions for subject X")
     print("  /props        list atomic semantic propositions")
     print("  /propsync     sync all atomic propositions to unified semantic memory")
+    print("  /subject X    show X => X+predicate mappings")
+    print("  /subjects     list subject-keyed proposition index")
     print("  /exit         quit")
     print()
 
@@ -2404,6 +2420,7 @@ def main() -> None:
     learning_state = Path(args.learning_state)
     proposition_path = resolve_runtime_path(args.propositions)
     unified_semantic_path = resolve_runtime_path(DEFAULT_SEMANTIC_KNOWLEDGE)
+    subject_index_path = resolve_runtime_path(args.subject_index)
     baseline_count = initialize_learning_state_if_missing(
         learning_state,
         learning_log,
@@ -2526,6 +2543,13 @@ def main() -> None:
                     added[0].subject,
                 )
                 print(f"[proposition composed: {rendered}]")
+                subject_index_count = sync_subject_index(
+                    proposition_path,
+                    subject_index_path,
+                )
+                print(
+                    f"[subject index rebuilt: {subject_index_count} statement(s)]"
+                )
                 synced = sync_subject_from_propositions(
                     proposition_path,
                     unified_semantic_path,
@@ -2542,14 +2566,52 @@ def main() -> None:
             continue
 
         if command == "/propsync":
+            subject_index_count = sync_subject_index(
+                proposition_path,
+                subject_index_path,
+            )
             synced_count = sync_all_propositions(
                 proposition_path,
                 unified_semantic_path,
             )
             print(
+                f"[subject index sync: {subject_index_count} statement(s), "
+                f"path={subject_index_path}]"
+            )
+            print(
                 f"[unified semantic sync: {synced_count} subject(s), "
                 f"path={unified_semantic_path}]"
             )
+            print()
+            continue
+
+        if command == "/subjects":
+            grouped = subject_index_dict(subject_index_path)
+            if not grouped:
+                print("[subject index: empty]")
+            else:
+                print(f"[subject index: {len(grouped)} subject(s)]")
+                for subject, statements in grouped.items():
+                    print(f"  {subject}:")
+                    for statement in statements:
+                        print(f"    {subject} => {statement}")
+            print()
+            continue
+
+        if command.startswith("/subject "):
+            subject = user_text[len("/subject "):].strip()
+            mappings = subject_mapping(subject_index_path, subject)
+            if not mappings:
+                print(f"[no subject-keyed propositions for {subject!r}]")
+            else:
+                for mapping in mappings:
+                    print(mapping)
+                composed = compose_subject_from_index(
+                    subject_index_path,
+                    subject,
+                )
+                if composed:
+                    print(f"[composed: {composed}]")
             print()
             continue
 
@@ -2782,6 +2844,26 @@ def main() -> None:
                 f"{canonical_query!r}]"
             )
             user_text = canonical_query
+
+        subject_focus = extract_concept_query_focus(user_text)
+        if not subject_focus:
+            subject_focus = extract_bare_concept_focus(user_text)
+        if subject_focus:
+            subject_answer = compose_subject_from_index(
+                subject_index_path,
+                subject_focus,
+            )
+            if subject_answer:
+                print(f"AI> {subject_answer}")
+                print(
+                    "[gate=KNOWN, source=subject-keyed-proposition, "
+                    f"concept={subject_focus}, route=subject-index-compose]"
+                )
+                print("[0 generated probe tokens, retrieval]")
+                print()
+                history.append((user_text, subject_answer))
+                last_ai_reply = subject_answer
+                continue
 
         proposition_hit = semantic_proposition_lookup(
             user_text,
