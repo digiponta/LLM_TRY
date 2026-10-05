@@ -1747,6 +1747,32 @@ def extract_bare_concept_focus(question: str) -> str:
     return ""
 
 
+BARE_DEFINITION_CONCEPTS = {
+    "ai", "人工知能",
+    "llm", "大規模言語モデル",
+    "cpu", "gpu", "cuda",
+    "コンピュータ",
+    "量子力学", "量子コンピュータ",
+    "semantic", "セマンティック", "セマンティックデータ",
+}
+
+
+def canonicalize_bare_known_query(question: str) -> str:
+    """Turn a validated bare knowledge concept into an explicit definition query.
+
+    Example: "CPU" -> "CPUとは".
+
+    Persona nouns such as "長門" are intentionally excluded; this helper is
+    only for concepts whose bare form semantically means "tell me what X is".
+    """
+    focus = extract_bare_concept_focus(question)
+    if not focus:
+        return question
+    if focus.lower() not in BARE_DEFINITION_CONCEPTS:
+        return question
+    return f"{focus}とは"
+
+
 def extract_concept_query_focus(question: str) -> str:
     """Extract a concept from the explicit query forms used by the pre-gate."""
     q = question.strip()
@@ -2697,6 +2723,14 @@ def main() -> None:
             print()
             last_ai_reply = None
             continue
+
+        canonical_query = canonicalize_bare_known_query(user_text)
+        if canonical_query != user_text:
+            print(
+                f"[canonical concept query: {user_text!r} -> "
+                f"{canonical_query!r}]"
+            )
+            user_text = canonical_query
 
         proposition_hit = semantic_proposition_lookup(
             user_text,
