@@ -145,12 +145,17 @@ def main() -> None:
             str(unknown_state),
         )
 
-        non_concept = resolve_knowledge_state("こんにちは", **common)
-        check(
-            "non-concept",
-            non_concept.state == "NON_CONCEPT",
-            str(non_concept),
-        )
+        for greeting in (
+            "こんにちは",
+            "こんばんは",
+            "おはようございます",
+        ):
+            non_concept = resolve_knowledge_state(greeting, **common)
+            check(
+                f"non-concept:{greeting}",
+                non_concept.state == "NON_CONCEPT",
+                str(non_concept),
+            )
 
     print()
     print("Typed state          : PASS")
