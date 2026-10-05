@@ -1203,6 +1203,24 @@ def internalized_teacher_fidelity(
     return float(torch.dot(generated_vector, teacher_vector).item())
 
 
+def apply_internalized_fidelity_policy(
+    accepted: bool,
+    fidelity: float,
+    threshold: float,
+) -> tuple[bool, str]:
+    if not accepted:
+        return False, ""
+    if fidelity < threshold:
+        return (
+            False,
+            (
+                "internalized teacher fidelity "
+                f"{fidelity:.3f} < {threshold:.3f}"
+            ),
+        )
+    return True, "internalized teacher fidelity passed"
+
+
 SLOT_ALIASES = {
     "ai": ("ai", "人工知能", "artificial intelligence"),
     "人工知能": ("人工知能", "ai", "artificial intelligence"),
@@ -3790,17 +3808,18 @@ def main() -> None:
                 generated_answer=primary.text,
                 teacher_answer=internalized_record.teacher_answer,
             )
-            if (
-                accepted
-                and internalized_fidelity
-                < args.min_internalized_fidelity
-            ):
-                accepted = False
-                reason = (
-                    "internalized teacher fidelity "
-                    f"{internalized_fidelity:.3f} < "
-                    f"{args.min_internalized_fidelity:.3f}"
+            fidelity_ok, fidelity_reason = (
+                apply_internalized_fidelity_policy(
+                    accepted=accepted,
+                    fidelity=internalized_fidelity,
+                    threshold=args.min_internalized_fidelity,
                 )
+            )
+            if accepted and not fidelity_ok:
+                accepted = False
+                reason = fidelity_reason
+            elif accepted and fidelity_ok:
+                reason = fidelity_reason
 
         resolution, action = classify_resolution(
             accepted,
