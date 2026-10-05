@@ -2586,6 +2586,7 @@ def main() -> None:
                         "[unified semantic upsert: "
                         f"concept={synced.get('concept')!r}, "
                         f"atomic_count={synced.get('atomic_count')}, "
+                        f"predicate_types={synced.get('predicate_types')}, "
                         f"source={synced.get('source')}]"
                     )
             print()
