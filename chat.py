@@ -80,6 +80,10 @@ from truth_state_v10103 import (
 from truth_aware_dispatch_v10103 import (
     apply_truth_policy,
 )
+from semantic_knowledge_architecture_v10110 import (
+    SemanticKnowledgeArchitecture,
+    SemanticKnowledgeConfig,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -2338,7 +2342,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.10.4 Truth-State Runtime Completion")
+    print(" LLM_TRY Chat - v10.11.0 Semantic Knowledge Architecture")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2475,6 +2479,22 @@ def main() -> None:
         args.typed_subject_index
     )
     truth_store_path = resolve_runtime_path(args.truth_store)
+
+    semantic_knowledge = SemanticKnowledgeArchitecture(
+        SemanticKnowledgeConfig(
+            proposition_path=proposition_path,
+            subject_index_path=subject_index_path,
+            typed_index_path=typed_subject_index_path,
+            unified_path=unified_semantic_path,
+            learning_log=learning_log,
+            learning_state=learning_state,
+            raw_corpus_path=resolve_runtime_path(
+                DEFAULT_RAW_KNOWLEDGE_CORPUS
+            ),
+            truth_store_path=truth_store_path,
+            canonical_definitions=CANONICAL_DEFINITIONS,
+        )
+    )
     baseline_count = initialize_learning_state_if_missing(
         learning_state,
         learning_log,
@@ -3193,36 +3213,20 @@ def main() -> None:
                 f"{resolver_query!r}]"
             )
 
-        knowledge_state = resolve_knowledge_state(
-            resolver_query,
-            typed_index_path=typed_subject_index_path,
-            subject_index_path=subject_index_path,
-            unified_path=unified_semantic_path,
-            learning_log=learning_log,
-            learning_state=learning_state,
-            raw_corpus_path=resolve_runtime_path(DEFAULT_RAW_KNOWLEDGE_CORPUS),
-            canonical_definitions=CANONICAL_DEFINITIONS,
+        semantic_result = semantic_knowledge.resolve(
+            resolver_query
         )
-        dispatch = dispatch_knowledge_state(knowledge_state)
+        knowledge_state = semantic_result.knowledge_state
+        dispatch = semantic_result.dispatch
+        truth_record = semantic_result.truth
+        truth_result = semantic_result.truth_result
 
-        truth_result = None
-        truth_record = None
-        if dispatch.focus and dispatch.state != "UNKNOWN":
-            truth_record = effective_truth_record(
-                truth_store_path,
-                dispatch.focus,
+        if truth_result is not None and truth_result.warning:
+            print(
+                f"[truth warning: state={truth_record.state}, "
+                f"concept={truth_record.concept!r}, "
+                f"message={truth_result.warning}]"
             )
-            truth_result = apply_truth_policy(
-                dispatch,
-                truth_record,
-            )
-            dispatch = truth_result.dispatch
-            if truth_result.warning:
-                print(
-                    f"[truth warning: state={truth_record.state}, "
-                    f"concept={truth_record.concept!r}, "
-                    f"message={truth_result.warning}]"
-                )
 
         if dispatch.action == "RETRIEVE":
             print(f"AI> {dispatch.answer}")
