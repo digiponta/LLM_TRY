@@ -13,6 +13,7 @@ Additional provenance fields are optional and ignored by the existing lookup.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Dict, List
 
@@ -72,6 +73,7 @@ def upsert_unified_concept(
         "concept": concept,
         "assistant": assistant,
         "source": source,
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
     if atomic_count is not None:
         replacement["atomic_count"] = int(atomic_count)
