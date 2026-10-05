@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Mapping
 
 from knowledge_state_resolver_v10100 import (
@@ -85,6 +86,8 @@ class SemanticKnowledgeResult:
     dispatch: DispatchResult
     truth: TruthRecord | None = None
     truth_result: TruthDispatchResult | None = None
+    routed_query: str = ""
+    bare_concept_routed: bool = False
 
     @property
     def action(self) -> str:
@@ -161,12 +164,66 @@ class SemanticKnowledgeArchitecture:
     def __init__(self, config: SemanticKnowledgeConfig):
         self.config = config
 
+    @staticmethod
+    def _bare_concept_focus(query: str) -> str:
+        q = str(query).strip()
+        if not q or len(q) > 24:
+            return ""
+        if re.search(r"[\s。、！？!?？,:：;；]", q):
+            return ""
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9_+.#\-]{1,23}", q):
+            return q
+        if re.fullmatch(r"[一-龯々ァ-ヶー]{2,24}", q):
+            return q
+        return ""
+
+    def _validated_semantic_concept_exists(self, concept: str) -> bool:
+        if not concept:
+            return False
+
+        if compose_subject_from_index(
+            self.config.subject_index_path,
+            concept,
+        ):
+            return True
+
+        if self.config.canonical_definitions.get(concept.lower(), ""):
+            return True
+
+        for row in load_unified_rows(self.config.unified_path):
+            if str(row.get("concept", "")).strip() == concept:
+                if str(row.get("assistant", "")).strip():
+                    return True
+
+        internalized = internalized_concept_for_focus(
+            load_internalized_concepts(
+                self.config.learning_log,
+                self.config.learning_state,
+            ),
+            concept,
+        )
+        return internalized is not None
+
+    def canonicalize_bare_semantic_query(
+        self,
+        query: str,
+    ) -> tuple[str, bool]:
+        focus = self._bare_concept_focus(query)
+        if not focus:
+            return query, False
+        if not self._validated_semantic_concept_exists(focus):
+            return query, False
+        return f"{focus}とは", True
+
     def resolve(
         self,
         query: str,
     ) -> SemanticKnowledgeResult:
+        routed_query, bare_concept_routed = (
+            self.canonicalize_bare_semantic_query(query)
+        )
         state = resolve_knowledge_state(
-            query,
+            routed_query,
             typed_index_path=self.config.typed_index_path,
             subject_index_path=self.config.subject_index_path,
             unified_path=self.config.unified_path,
@@ -200,6 +257,8 @@ class SemanticKnowledgeArchitecture:
             dispatch=dispatch,
             truth=truth,
             truth_result=truth_result,
+            routed_query=routed_query,
+            bare_concept_routed=bare_concept_routed,
         )
 
     def teach_proposition(
@@ -254,7 +313,7 @@ class SemanticKnowledgeArchitecture:
     def status(self) -> dict[str, object]:
         return {
             "architecture": "Semantic Knowledge Architecture",
-            "version": "v10.11.1",
+            "version": "v10.11.2",
             "proposition_path": str(self.config.proposition_path),
             "subject_index_path": str(self.config.subject_index_path),
             "typed_index_path": str(self.config.typed_index_path),
