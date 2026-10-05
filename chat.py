@@ -65,6 +65,9 @@ from internalized_knowledge_v10100 import (
     load_internalized_concepts,
     load_internalized_records,
 )
+from knowledge_state_resolver_v10100 import (
+    resolve_knowledge_state,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -2934,6 +2937,52 @@ def main() -> None:
             print()
             last_ai_reply = None
             continue
+
+        knowledge_state = resolve_knowledge_state(
+            user_text,
+            typed_index_path=typed_subject_index_path,
+            subject_index_path=subject_index_path,
+            unified_path=unified_semantic_path,
+            learning_log=learning_log,
+            learning_state=learning_state,
+            raw_corpus_path=resolve_runtime_path(DEFAULT_RAW_KNOWLEDGE_CORPUS),
+            canonical_definitions=CANONICAL_DEFINITIONS,
+        )
+
+        if knowledge_state.state == "RAW_CORPUS_ONLY":
+            route_result = route_resolution_action(
+                args=args,
+                resolution="UNKNOWN_KNOWLEDGE",
+                action="retrieve/teach",
+                user_text=user_text,
+                candidate_answer="",
+                reason=(
+                    "raw corpus only: "
+                    + knowledge_state.reason
+                ),
+            )
+            print(f"AI> {UNKNOWN_REPLY}")
+            print(
+                "[knowledge-state=RAW_CORPUS_ONLY, "
+                f"concept={knowledge_state.focus}, "
+                "generation=blocked]"
+            )
+            print(f"[route={route_result}]")
+            print(
+                "[gate=UNKNOWN, resolution=UNKNOWN_KNOWLEDGE, "
+                "action=retrieve/teach, route=knowledge-state-resolver, "
+                f"reason={knowledge_state.reason}]"
+            )
+            print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
+            print()
+            last_ai_reply = None
+            continue
+
+        if knowledge_state.state == "UNKNOWN":
+            print(
+                "[knowledge-state=UNKNOWN, "
+                f"concept={knowledge_state.focus}]"
+            )
 
         typed_query_hit = typed_query_lookup(
             typed_subject_index_path,
