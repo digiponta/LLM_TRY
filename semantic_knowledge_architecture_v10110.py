@@ -119,6 +119,42 @@ class SemanticKnowledgeSyncResult:
     unified_subject_count: int
 
 
+@dataclass(frozen=True)
+class SemanticKnowledgeSnapshot:
+    concept: str
+    query: str
+    atomic_propositions: tuple[Proposition, ...]
+    subject_answer: str
+    typed_rows: tuple[object, ...]
+    unified_row: Mapping[str, object] | None
+    internalized: InternalizedConcept | None
+    result: SemanticKnowledgeResult
+
+    @property
+    def proposition_count(self) -> int:
+        return len(self.atomic_propositions)
+
+    @property
+    def typed_count(self) -> int:
+        return len(self.typed_rows)
+
+    @property
+    def unified_present(self) -> bool:
+        return self.unified_row is not None
+
+    @property
+    def internalized_present(self) -> bool:
+        return self.internalized is not None
+
+    @property
+    def truth_state(self) -> str:
+        return self.result.truth_state or ""
+
+    @property
+    def final_action(self) -> str:
+        return self.result.action
+
+
 class SemanticKnowledgeArchitecture:
     """Single runtime/control surface for semantic knowledge."""
 
