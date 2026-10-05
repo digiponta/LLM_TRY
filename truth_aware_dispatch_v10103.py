@@ -18,6 +18,8 @@ class TruthDispatchResult:
     truth: TruthRecord
     warning: str = ""
     correction_applied: bool = False
+    runtime_status: str = "PASS"
+    user_message: str = ""
 
 
 def apply_truth_policy(
@@ -31,6 +33,7 @@ def apply_truth_policy(
         return TruthDispatchResult(
             dispatch=dispatch,
             truth=truth,
+            runtime_status="PASS",
         )
 
     if state == "UNVERIFIED":
@@ -38,6 +41,7 @@ def apply_truth_policy(
             dispatch=dispatch,
             truth=truth,
             warning="knowledge is unverified",
+            runtime_status="WARN",
         )
 
     if state == "CONTESTED":
@@ -48,6 +52,7 @@ def apply_truth_policy(
                 "knowledge is contested"
                 + (f": {truth.reason}" if truth.reason else "")
             ),
+            runtime_status="WARN",
         )
 
     if state in {"FALSE", "OUTDATED"}:
@@ -73,6 +78,7 @@ def apply_truth_policy(
                     "stored correction applied"
                 ),
                 correction_applied=True,
+                runtime_status="CORRECTED",
             )
 
         blocked = DispatchResult(
@@ -89,6 +95,13 @@ def apply_truth_policy(
             dispatch=blocked,
             truth=truth,
             warning=f"knowledge is {label}",
+            runtime_status="BLOCK",
+            user_message=(
+                "この知識は誤りとして登録されており、修正情報がありません。"
+                if state == "FALSE"
+                else
+                "この知識は古い情報として登録されており、更新情報がありません。"
+            ),
         )
 
     raise ValueError(f"unsupported truth state: {state!r}")
