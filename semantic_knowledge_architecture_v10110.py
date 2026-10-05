@@ -44,11 +44,23 @@ from semantic_proposition_v1090 import (
     add_statement,
     load_propositions,
 )
-from subject_keyed_proposition_v1090 import sync_subject_index
-from typed_subject_proposition_v10100 import sync_typed_index
+from subject_keyed_proposition_v1090 import (
+    compose_subject_from_index,
+    sync_subject_index,
+)
+from typed_subject_proposition_v10100 import (
+    sync_typed_index,
+    typed_subject_rows,
+)
 from unified_semantic_bridge_v1090 import (
+    load_unified_rows,
     sync_all_propositions,
     sync_subject_from_propositions,
+)
+from internalized_knowledge_v10100 import (
+    InternalizedConcept,
+    internalized_concept_for_focus,
+    load_internalized_concepts,
 )
 
 
@@ -206,7 +218,7 @@ class SemanticKnowledgeArchitecture:
     def status(self) -> dict[str, object]:
         return {
             "architecture": "Semantic Knowledge Architecture",
-            "version": "v10.11.0",
+            "version": "v10.11.1",
             "proposition_path": str(self.config.proposition_path),
             "subject_index_path": str(self.config.subject_index_path),
             "typed_index_path": str(self.config.typed_index_path),
