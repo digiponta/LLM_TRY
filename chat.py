@@ -3518,10 +3518,18 @@ def main() -> None:
                 truth_result is not None
                 and truth_result.runtime_status == "BLOCK"
             )
+            stale_internalized = (
+                dispatch.state == "INTERNALIZED_STALE"
+                and not truth_block
+            )
             if truth_block:
                 route_result = "truth-state block"
                 resolution_name = "TRUTH_BLOCK"
                 action_name = "review/correct"
+            elif stale_internalized:
+                route_result = "checkpoint rebind required"
+                resolution_name = "INTERNALIZED_STALE"
+                action_name = "rebind/train"
             else:
                 route_result = route_resolution_action(
                     args=args,
@@ -3541,7 +3549,11 @@ def main() -> None:
                 if truth_result is not None
                 and truth_result.runtime_status == "BLOCK"
                 and truth_result.user_message
-                else UNKNOWN_REPLY
+                else (
+                    "学習証拠はありますが、現在のcheckpointには未反映です。"
+                    if stale_internalized
+                    else UNKNOWN_REPLY
+                )
             )
             print(f"AI> {block_reply}")
             print(
@@ -3553,6 +3565,11 @@ def main() -> None:
                 print(
                     "[truth path: set a correction with "
                     "/truthset CONCEPT FALSE|OUTDATED => CORRECTION]"
+                )
+            elif stale_internalized:
+                print(
+                    "[checkpoint path: run /train to replay trusted pairs "
+                    "into the current checkpoint]"
                 )
             else:
                 print(
