@@ -242,3 +242,38 @@ def revoke_concept_verification(
     if changed:
         save_queue_rows(queue_path, rows)
     return changed
+
+
+def consolidate_legacy_resolved(queue_path: Path) -> int:
+    rows = load_queue_rows(queue_path)
+    if not rows:
+        return 0
+
+    concept_state: dict[str, str] = {}
+    for row in rows:
+        status = str(row.get("status", "pending"))
+        if status not in {"promoted", "verified"}:
+            continue
+        concept = normalize_queue_text(row_concept(row))
+        if not concept:
+            continue
+        if status == "verified" or concept not in concept_state:
+            concept_state[concept] = status
+
+    changed = 0
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    for row in rows:
+        if str(row.get("status", "")) != "resolved":
+            continue
+        concept = normalize_queue_text(row_concept(row))
+        target = concept_state.get(concept)
+        if target is None:
+            continue
+        row["status"] = target
+        row["legacy_resolved_migrated_at"] = now
+        row["lifecycle_source"] = "v10.11.5-legacy-consolidation"
+        changed += 1
+
+    if changed:
+        save_queue_rows(queue_path, rows)
+    return changed
