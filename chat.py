@@ -2345,7 +2345,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.11.1 Semantic Knowledge Snapshot")
+    print(" LLM_TRY Chat - v10.11.2 Bare Concept Semantic Routing")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2925,6 +2925,8 @@ def main() -> None:
                     f"truth_state={truth_text}, "
                     f"truth_runtime={runtime_text}, "
                     f"truth_warning={warning_text!r}, "
+                    f"bare_routed={result.bare_concept_routed}, "
+                    f"routed_query={result.routed_query!r}, "
                     f"provenance={provenance_text}]"
                 )
                 if dispatch.answer:
@@ -2945,6 +2947,8 @@ def main() -> None:
                     f"predicate_type={state.predicate_type!r}, "
                     f"retrieval={state.is_retrieval}, "
                     f"model_generation={state.permits_model_generation}, "
+                    f"bare_routed={result.bare_concept_routed}, "
+                    f"routed_query={result.routed_query!r}, "
                     f"reason={state.reason}]"
                 )
                 if state.answer:
@@ -3260,16 +3264,18 @@ def main() -> None:
             last_ai_reply = None
             continue
 
-        resolver_query = canonicalize_bare_known_query(user_text)
-        if resolver_query != user_text:
+        semantic_result = semantic_knowledge.resolve(
+            user_text
+        )
+        resolver_query = (
+            semantic_result.routed_query
+            or user_text
+        )
+        if semantic_result.bare_concept_routed:
             print(
-                f"[canonical concept query: {user_text!r} -> "
+                f"[semantic bare routing: {user_text!r} -> "
                 f"{resolver_query!r}]"
             )
-
-        semantic_result = semantic_knowledge.resolve(
-            resolver_query
-        )
         knowledge_state = semantic_result.knowledge_state
         dispatch = semantic_result.dispatch
         truth_record = semantic_result.truth
