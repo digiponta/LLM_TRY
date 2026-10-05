@@ -68,6 +68,9 @@ from internalized_knowledge_v10100 import (
 from knowledge_state_resolver_v10100 import (
     resolve_knowledge_state,
 )
+from knowledge_state_dispatcher_v10101 import (
+    dispatch_knowledge_state,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -2320,7 +2323,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.10.0 Semantic Integration")
+    print(" LLM_TRY Chat - v10.10.1 Knowledge State Dispatcher")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2969,8 +2972,15 @@ def main() -> None:
             last_ai_reply = None
             continue
 
+        resolver_query = canonicalize_bare_known_query(user_text)
+        if resolver_query != user_text:
+            print(
+                f"[canonical concept query: {user_text!r} -> "
+                f"{resolver_query!r}]"
+            )
+
         knowledge_state = resolve_knowledge_state(
-            user_text,
+            resolver_query,
             typed_index_path=typed_subject_index_path,
             subject_index_path=subject_index_path,
             unified_path=unified_semantic_path,
@@ -2979,250 +2989,95 @@ def main() -> None:
             raw_corpus_path=resolve_runtime_path(DEFAULT_RAW_KNOWLEDGE_CORPUS),
             canonical_definitions=CANONICAL_DEFINITIONS,
         )
+        dispatch = dispatch_knowledge_state(knowledge_state)
 
-        if knowledge_state.state == "RAW_CORPUS_ONLY":
-            route_result = route_resolution_action(
-                args=args,
-                resolution="UNKNOWN_KNOWLEDGE",
-                action="retrieve/teach",
-                user_text=user_text,
-                candidate_answer="",
-                reason=(
-                    "raw corpus only: "
-                    + knowledge_state.reason
-                ),
+        if dispatch.action == "RETRIEVE":
+            print(f"AI> {dispatch.answer}")
+            predicate_part = (
+                f", predicate_type={dispatch.predicate_type}"
+                if dispatch.predicate_type
+                else ""
             )
-            print(f"AI> {UNKNOWN_REPLY}")
             print(
-                "[knowledge-state=RAW_CORPUS_ONLY, "
-                f"concept={knowledge_state.focus}, "
-                "generation=blocked]"
-            )
-            print(f"[route={route_result}]")
-            print(
-                "[gate=UNKNOWN, resolution=UNKNOWN_KNOWLEDGE, "
-                "action=retrieve/teach, route=knowledge-state-resolver, "
-                f"reason={knowledge_state.reason}]"
-            )
-            print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
-            print()
-            last_ai_reply = None
-            continue
-
-        if knowledge_state.state == "UNKNOWN":
-            print(
-                "[knowledge-state=UNKNOWN, "
-                f"concept={knowledge_state.focus}]"
-            )
-
-        typed_query_hit = typed_query_lookup(
-            typed_subject_index_path,
-            user_text,
-        )
-        if typed_query_hit is not None:
-            typed_subject, typed_predicate_type, typed_answer = typed_query_hit
-            print(f"AI> {typed_answer}")
-            print(
-                "[gate=KNOWN, source=typed-subject-proposition, "
-                f"concept={typed_subject}, "
-                f"predicate_type={typed_predicate_type}, "
-                "route=typed-query-filter]"
-            )
-            print("[0 generated probe tokens, retrieval]")
-            print()
-            history.append((user_text, typed_answer))
-            last_ai_reply = typed_answer
-            continue
-
-        canonical_query = canonicalize_bare_known_query(user_text)
-        if canonical_query != user_text:
-            print(
-                f"[canonical concept query: {user_text!r} -> "
-                f"{canonical_query!r}]"
-            )
-            user_text = canonical_query
-
-        subject_focus = extract_concept_query_focus(user_text)
-        if not subject_focus:
-            subject_focus = extract_bare_concept_focus(user_text)
-        if subject_focus:
-            subject_answer = compose_subject_from_index(
-                subject_index_path,
-                subject_focus,
-            )
-            if subject_answer:
-                typed_rows = typed_subject_rows(
-                    typed_subject_index_path,
-                    subject_focus,
-                )
-                predicate_types = []
-                for row in typed_rows:
-                    if row.predicate_type not in predicate_types:
-                        predicate_types.append(row.predicate_type)
-                type_text = (
-                    ",".join(predicate_types)
-                    if predicate_types
-                    else "untyped"
-                )
-                print(f"AI> {subject_answer}")
-                print(
-                    "[gate=KNOWN, source=typed-subject-proposition, "
-                    f"concept={subject_focus}, "
-                    f"predicate_types={type_text}, "
-                    "route=subject-index-compose]"
-                )
-                print("[0 generated probe tokens, retrieval]")
-                print()
-                history.append((user_text, subject_answer))
-                last_ai_reply = subject_answer
-                continue
-
-        proposition_hit = semantic_proposition_lookup(
-            user_text,
-            proposition_path,
-        )
-        if proposition_hit is not None:
-            proposition_concept, proposition_answer = proposition_hit
-            print(f"AI> {proposition_answer}")
-            print(
-                "[gate=KNOWN, source=semantic-proposition, "
-                f"concept={proposition_concept}, route=atomic-compose]"
-            )
-            print()
-            last_ai_reply = proposition_answer
-            if learning_enabled:
-                append_learning_pair(
-                    learning_log,
-                    user_text,
-                    proposition_answer,
-                    source="chat-auto",
-                )
-            history.append((user_text, proposition_answer))
-            continue
-
-        canonical_hit = canonical_definition_lookup(user_text)
-        if canonical_hit is not None:
-            canonical_concept, canonical_answer = canonical_hit
-            print(f"AI> {canonical_answer}")
-            print(
-                "[gate=KNOWN, confidence=1.000, min_tok_conf=1.000, "
-                "mean_margin=1.000, agreement=1.000, sem_agreement=1.000, "
-                f"intent=canonical_definition, slots={canonical_concept}, "
-                "slot_cov=1.00, qa_sim=1.000, prev_sim=-1.000, "
-                "agr_th=0.00, context_turns=0, resolution=ACCEPT, "
-                "action=none, route=canonical definition retrieval, "
-                "reason=validated canonical definition]"
-            )
-            print("[0 generated probe tokens, retrieval]")
-            print()
-            history.append((user_text, canonical_answer))
-            last_ai_reply = canonical_answer
-            continue
-
-        semantic_hit = semantic_knowledge_lookup(user_text)
-        if semantic_hit is not None:
-            semantic_concept, semantic_answer = semantic_hit
-            print(f"AI> {semantic_answer}")
-            print(
-                f"[gate=KNOWN, confidence=1.000, min_tok_conf=1.000, "
-                f"mean_margin=1.000, agreement=1.000, sem_agreement=1.000, "
-                f"intent=semantic_retrieval, slots={semantic_concept}, "
-                f"slot_cov=1.00, qa_sim=1.000, prev_sim=-1.000, "
-                f"agr_th=0.00, context_turns=0, resolution=ACCEPT, "
-                f"action=none, route=semantic proposition retrieval, "
-                f"reason=merged semantic knowledge hit]"
+                f"[gate=KNOWN, knowledge_state={dispatch.state}, "
+                f"concept={dispatch.focus}{predicate_part}, "
+                f"route={dispatch.route}, reason={dispatch.reason}]"
             )
             print("[0 generated probe tokens, retrieval]")
             print()
 
             resolved = resolve_teaching_queue(
                 Path(args.teaching_queue),
-                user_text,
+                resolver_query,
             )
             if resolved:
                 print(f"[resolved teaching queue entries: {resolved}]")
             resolved_knowledge = resolve_route_queue(
                 Path(args.knowledge_queue),
-                user_text,
+                resolver_query,
                 "UNKNOWN_KNOWLEDGE",
             )
             if resolved_knowledge:
                 print(
-                    f"[resolved knowledge queue entries: {resolved_knowledge}]"
+                    f"[resolved knowledge queue entries: "
+                    f"{resolved_knowledge}]"
                 )
 
-            history.append((user_text, semantic_answer))
-            last_ai_reply = semantic_answer
-            if learning_enabled:
-                print(
-                    "[learning candidate ready: use /good to approve "
-                    "or /teach TEXT to correct]"
-                )
+            history.append((resolver_query, dispatch.answer))
+            last_ai_reply = dispatch.answer
             continue
 
-        internalized_focus = extract_concept_query_focus(user_text)
-        if not internalized_focus:
-            internalized_focus = extract_definition_focus(user_text) or ""
-        if internalized_focus:
+        if dispatch.action == "BLOCK":
+            route_result = route_resolution_action(
+                args=args,
+                resolution="UNKNOWN_KNOWLEDGE",
+                action="retrieve/teach",
+                user_text=resolver_query,
+                candidate_answer="",
+                reason=(
+                    f"knowledge state {dispatch.state}: "
+                    f"{dispatch.reason}"
+                ),
+            )
+            print(f"AI> {UNKNOWN_REPLY}")
+            print(
+                f"[knowledge-state={dispatch.state}, "
+                f"concept={dispatch.focus}, generation=blocked]"
+            )
+            print(f"[route={route_result}]")
+            print(
+                "[teaching path: /teach ANSWER -> /train "
+                "(or /teachq QUESTION => ANSWER)]"
+            )
+            print(
+                "[gate=UNKNOWN, resolution=UNKNOWN_KNOWLEDGE, "
+                "action=retrieve/teach, route=knowledge-state-dispatcher, "
+                f"reason={dispatch.reason}]"
+            )
+            print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
+            print()
+            last_ai_reply = None
+            continue
+
+        # GENERATE: only INTERNALIZED and NON_CONCEPT reach this point.
+        if dispatch.state == "INTERNALIZED":
             internalized_records = load_internalized_records(
                 learning_log,
                 learning_state,
             )
             internalized_record = internalized_record_for_focus(
                 internalized_records,
-                internalized_focus,
+                dispatch.focus,
             )
-            if internalized_record is not None:
-                print(
-                    "[internalized route: "
-                    f"concept={internalized_record.concept!r}, "
-                    f"source={internalized_record.source}, "
-                    "generation=model-weights]"
-                )
+            print(
+                "[internalized route: "
+                f"concept={dispatch.focus!r}, "
+                "generation=model-weights]"
+            )
+        else:
+            internalized_record = None
 
-        if args.unknown_rejection:
-            promoted_concepts = trained_known_concepts(
-                learning_log,
-                learning_state,
-            )
-            pre_unknown, pre_focus = pre_generation_unknown_concept(
-                user_text,
-                promoted_concepts=promoted_concepts,
-            )
-            if internalized_record is not None:
-                pre_unknown = False
-                pre_focus = internalized_record.concept
-            if pre_unknown:
-                route_result = route_resolution_action(
-                    args=args,
-                    resolution="UNKNOWN_KNOWLEDGE",
-                    action="retrieve/teach",
-                    user_text=user_text,
-                    candidate_answer="",
-                    reason=f"unknown concept: {pre_focus}",
-                )
-                print(f"AI> {UNKNOWN_REPLY}")
-                print(f"[route={route_result}]")
-                print(
-                    "[teaching path: /teach ANSWER -> /train "
-                    "(or /teachq QUESTION => ANSWER)]"
-                )
-                if args.show_risk:
-                    print(
-                        f"[gate=UNKNOWN, confidence=0.000, "
-                        f"min_tok_conf=0.000, mean_margin=0.000, "
-                        f"agreement=1.000, sem_agreement=1.000, "
-                        f"intent=concept_precheck, slots={pre_focus}, "
-                        f"slot_cov=0.00, qa_sim=0.000, prev_sim=-1.000, "
-                        f"agr_th={args.min_agreement:.2f}, context_turns=0, "
-                        f"resolution=UNKNOWN_KNOWLEDGE, action=retrieve/teach, "
-                        f"route=pre-generation concept gate, "
-                        f"reason=unknown concept: {pre_focus}]"
-                    )
-                print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
-                print()
-                last_ai_reply = None
-                continue
+        user_text = resolver_query
 
         generation_user_text = (
             internalized_record.question
