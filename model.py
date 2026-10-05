@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Mapping
 
 import torch
 import torch.nn as nn
@@ -223,6 +223,7 @@ class LanguageModel(nn.Module):
         optimizer: Optional[torch.optim.Optimizer] = None,
         epoch: Optional[int] = None,
         loss: Optional[float] = None,
+        metadata: Optional[Mapping[str, object]] = None,
     ) -> None:
         path = Path(filename)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -236,6 +237,8 @@ class LanguageModel(nn.Module):
         }
         if optimizer is not None:
             checkpoint["optimizer_state_dict"] = optimizer.state_dict()
+        if metadata is not None:
+            checkpoint["metadata"] = dict(metadata)
 
         torch.save(checkpoint, path)
 
