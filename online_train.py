@@ -299,11 +299,17 @@ def main() -> None:
 
     pending_rows = [
         row for row in trusted_rows
-        if pair_fingerprint(row[0], row[1]) not in checkpoint_fingerprints
+        if (
+            pair_fingerprint(row[0], row[1]) not in checkpoint_fingerprints
+            or pair_fingerprint(row[0], row[1]) not in trained_fingerprints
+        )
     ]
     historical_rows = [
         row for row in trusted_rows
-        if pair_fingerprint(row[0], row[1]) in checkpoint_fingerprints
+        if (
+            pair_fingerprint(row[0], row[1]) in checkpoint_fingerprints
+            and pair_fingerprint(row[0], row[1]) in trained_fingerprints
+        )
     ]
 
     if not pending_rows:
