@@ -87,3 +87,72 @@ python .\chat.py
 Phase 2 will connect proposition normalization with the existing unified
 semantic-memory/relation pipeline. Later phases can add LLM_SEM-style semantic
 routing and controlled internalization.
+
+
+## Phase 2: Atomic Proposition Store + Unified Semantic Memory
+
+Phase 2 connects the atomic proposition store to the existing unified semantic
+memory. A successful `/propteach` now:
+
+~~~text
+Natural-language proposition
+        ↓
+decompose
+        ↓
+Atomic Proposition Store
+        ↓
+compose same subject
+        ↓
+Unified Semantic Memory upsert
+        ↓
+normal semantic retrieval
+~~~
+
+Example:
+
+~~~text
+/propteach 架空装置は高速である。
+/propteach 架空装置は低消費電力である。
+~~~
+
+The unified semantic-memory row becomes:
+
+~~~json
+{
+  "concept": "架空装置",
+  "assistant": "架空装置は、高速であり、低消費電力である。",
+  "source": "atomic-proposition",
+  "atomic_count": 2
+}
+~~~
+
+Existing unrelated unified-memory rows are preserved. Existing rows for the
+same concept are replaced by one canonical composed row.
+
+The chat command `/propsync` performs a full synchronization of every subject
+currently stored in the atomic proposition database.
+
+### Phase 2 verification
+
+~~~powershell
+python .\run_phase2_atomic_unified_regression_v1090.py
+python .\chat.py
+~~~
+
+Interactive check:
+
+~~~text
+/propteach 架空装置は高速である。
+/propteach 架空装置は低消費電力である。
+/props
+架空装置とは
+~~~
+
+Expected result:
+
+~~~text
+架空装置は、高速であり、低消費電力である。
+~~~
+
+The resulting unified-memory record remains compatible with the existing
+`semantic_knowledge_lookup()` path.
