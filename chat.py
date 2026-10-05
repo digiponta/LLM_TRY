@@ -2825,6 +2825,11 @@ def main() -> None:
                     if truth_result is not None
                     else ""
                 )
+                runtime_text = (
+                    truth_result.runtime_status
+                    if truth_result is not None
+                    else "-"
+                )
                 print(
                     f"[dispatch action={dispatch.action}, "
                     f"state={dispatch.state}, "
@@ -2834,6 +2839,7 @@ def main() -> None:
                     f"route={dispatch.route}, "
                     f"reason={dispatch.reason}, "
                     f"truth_state={truth_text}, "
+                    f"truth_runtime={runtime_text}, "
                     f"truth_warning={warning_text!r}, "
                     f"provenance={provenance_text}]"
                 )
@@ -3241,12 +3247,17 @@ def main() -> None:
                 and truth_result.correction_applied
                 else ""
             )
+            truth_runtime_part = (
+                f", truth_runtime={truth_result.runtime_status}"
+                if truth_result is not None
+                else ""
+            )
             print(
                 f"[gate=KNOWN, knowledge_state={dispatch.state}, "
                 f"concept={dispatch.focus}{predicate_part}, "
                 f"route={dispatch.route}, reason={dispatch.reason}, "
                 f"provenance={provenance_text}"
-                f"{truth_part}{correction_part}]"
+                f"{truth_part}{correction_part}{truth_runtime_part}]"
             )
             print("[0 generated probe tokens, retrieval]")
             print()
