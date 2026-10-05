@@ -163,16 +163,20 @@ def main() -> None:
         check(
             "raw-corpus-not-promoted",
             not raw.bare_concept_routed
+            and raw.bare_unknown_blocked
             and raw.routed_query == "時間"
-            and raw.state == "NON_CONCEPT",
+            and raw.state == "UNKNOWN"
+            and raw.action == "BLOCK",
             str(raw),
         )
 
         unknown = architecture.resolve("架空概念")
         check(
-            "unknown-bare-preserves-normal-path",
+            "unknown-bare-preserves-safety-block",
             not unknown.bare_concept_routed
-            and unknown.state == "NON_CONCEPT",
+            and unknown.bare_unknown_blocked
+            and unknown.state == "UNKNOWN"
+            and unknown.action == "BLOCK",
             str(unknown),
         )
 
@@ -184,7 +188,7 @@ def main() -> None:
     print("INTERNALIZED bare route : PASS")
     print("Persona preservation    : PASS")
     print("Raw corpus isolation    : PASS")
-    print("Unknown preservation    : PASS")
+    print("Unknown safety block    : PASS")
     print("STATUS                  : BARE_CONCEPT_SEMANTIC_ROUTING_PASS")
 
 
