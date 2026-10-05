@@ -1362,6 +1362,25 @@ def composite_internalized_teacher_fidelity(
     )
 
 
+def apply_internalized_fidelity_policy(
+    accepted: bool,
+    fidelity: float,
+    threshold: float,
+) -> tuple[bool, str]:
+    """Backward-compatible v10.11.7 single-score fidelity policy."""
+    if not accepted:
+        return False, ""
+    if fidelity < threshold:
+        return (
+            False,
+            (
+                "internalized teacher fidelity "
+                f"{fidelity:.3f} < {threshold:.3f}"
+            ),
+        )
+    return True, "internalized teacher fidelity passed"
+
+
 def apply_composite_internalized_fidelity_policy(
     accepted: bool,
     result: CompositeFidelityResult,
