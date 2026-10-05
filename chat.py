@@ -27,6 +27,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 from typing import List, Tuple
 
 import torch
@@ -1405,6 +1406,19 @@ def extract_definition_focus(text: str) -> str | None:
 
 
 
+RUNTIME_TRAILING_PUNCTUATION = "、，,。．.!！?？:：;；"
+
+
+def normalize_runtime_input(text: str) -> str:
+    """Normalize harmless surface punctuation before runtime routing.
+
+    This deliberately removes only sentence-final punctuation and applies NFKC.
+    Semantic content and internal punctuation are preserved.
+    """
+    normalized = unicodedata.normalize("NFKC", text).strip()
+    return normalized.rstrip(RUNTIME_TRAILING_PUNCTUATION).strip()
+
+
 def input_quality_check(text: str) -> tuple[bool, str]:
     q = text.strip()
     if not q:
@@ -1843,9 +1857,12 @@ def pre_generation_unknown_concept(
     triggers on explicit concept-query forms so ordinary persona/chat prompts
     such as '本は好きですか' are unaffected.
     """
-    focus = extract_concept_query_focus(question)
+    explicit_focus = extract_concept_query_focus(question)
+    bare_focus = ""
+    focus = explicit_focus
     if not focus:
-        focus = extract_bare_concept_focus(question)
+        bare_focus = extract_bare_concept_focus(question)
+        focus = bare_focus
     if not focus:
         return False, ""
 
@@ -1865,6 +1882,16 @@ def pre_generation_unknown_concept(
         return False, focus
     if promoted_concepts and norm in promoted_concepts:
         return False, focus
+
+    # v10.9.0 semantic integration: a bare noun such as "時間" must not
+    # become KNOWN merely because the raw corpus contains the token.  Bare
+    # concept queries require validated/promoted knowledge or a retrieval hit
+    # handled before this gate.  This prevents corpus-frequency hallucination.
+    if bare_focus:
+        return True, focus
+
+    # Preserve the legacy raw-corpus relaxation only for explicit concept
+    # queries such as "Xとは".  Generated answers still pass downstream gates.
     if raw_corpus_knows_focus(focus):
         return False, focus
     return True, focus
@@ -2207,7 +2234,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.5 Bare Concept Gate")
+    print(" LLM_TRY Chat - v10.9.0 Semantic Integration")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2348,6 +2375,13 @@ def main() -> None:
             print()
             break
 
+        if not user_text:
+            continue
+
+        normalized_user_text = normalize_runtime_input(user_text)
+        if normalized_user_text and normalized_user_text != user_text:
+            print(f"[normalized input: {user_text!r} -> {normalized_user_text!r}]")
+            user_text = normalized_user_text
         if not user_text:
             continue
 
