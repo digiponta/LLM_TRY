@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import json
 import hashlib
@@ -2355,7 +2355,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.11.5 Knowledge Queue Lifecycle Consolidation")
+    print(" LLM_TRY Chat - v10.11.6 Internalized Checkpoint Binding")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2395,7 +2395,29 @@ def print_info(
         if CALIBRATION_INFO.get("loaded"):
             print("Centroid source : TRAIN ONLY")
             print("Holdout in fit  :", CALIBRATION_INFO.get("holdout_used_for_centroid"))
+    metadata = checkpoint.get("metadata", {})
+    if isinstance(metadata, dict):
+        bound = metadata.get("trained_fingerprints", [])
+        binding_version = metadata.get("knowledge_binding_version", "")
+        print(
+            "Checkpoint bind :",
+            f"{len(bound) if isinstance(bound, list) else 0} fingerprint(s)",
+        )
+        if binding_version:
+            print("Binding version :", binding_version)
     print()
+
+
+def checkpoint_trained_fingerprints(
+    checkpoint: dict,
+) -> frozenset[str]:
+    metadata = checkpoint.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return frozenset()
+    values = metadata.get("trained_fingerprints", [])
+    if not isinstance(values, (list, tuple, set)):
+        return frozenset()
+    return frozenset(str(value) for value in values)
 
 
 def main() -> None:
@@ -2498,20 +2520,24 @@ def main() -> None:
     )
     truth_store_path = resolve_runtime_path(args.truth_store)
 
+    semantic_config = SemanticKnowledgeConfig(
+        proposition_path=proposition_path,
+        subject_index_path=subject_index_path,
+        typed_index_path=typed_subject_index_path,
+        unified_path=unified_semantic_path,
+        learning_log=learning_log,
+        learning_state=learning_state,
+        raw_corpus_path=resolve_runtime_path(
+            DEFAULT_RAW_KNOWLEDGE_CORPUS
+        ),
+        truth_store_path=truth_store_path,
+        canonical_definitions=CANONICAL_DEFINITIONS,
+        checkpoint_fingerprints=checkpoint_trained_fingerprints(
+            checkpoint
+        ),
+    )
     semantic_knowledge = SemanticKnowledgeArchitecture(
-        SemanticKnowledgeConfig(
-            proposition_path=proposition_path,
-            subject_index_path=subject_index_path,
-            typed_index_path=typed_subject_index_path,
-            unified_path=unified_semantic_path,
-            learning_log=learning_log,
-            learning_state=learning_state,
-            raw_corpus_path=resolve_runtime_path(
-                DEFAULT_RAW_KNOWLEDGE_CORPUS
-            ),
-            truth_store_path=truth_store_path,
-            canonical_definitions=CANONICAL_DEFINITIONS,
-        )
+        semantic_config
     )
     migrated_legacy_queue = consolidate_legacy_resolved(
         Path(args.knowledge_queue)
@@ -3107,11 +3133,20 @@ def main() -> None:
                 print(
                     f"[internalized concepts: {len(concepts)} concept(s)]"
                 )
+                checkpoint_bound = (
+                    semantic_config.checkpoint_fingerprints
+                    or frozenset()
+                )
                 for index, concept in enumerate(concepts, 1):
                     source_text = ",".join(concept.sources)
+                    bound = any(
+                        fp in checkpoint_bound
+                        for fp in concept.fingerprints
+                    )
                     print(
                         f"  {index:02d}. concept={concept.concept!r} "
                         f"trained_pairs={concept.trained_pairs} "
+                        f"binding={'CURRENT' if bound else 'STALE'} "
                         f"sources={source_text} "
                         f"latest_question={concept.latest_question!r}"
                     )
@@ -3355,6 +3390,20 @@ def main() -> None:
                 )
                 model_path = new_model_path
                 print(f"[reloaded trained checkpoint: {model_path}]")
+                semantic_config = replace(
+                    semantic_config,
+                    checkpoint_fingerprints=(
+                        checkpoint_trained_fingerprints(checkpoint)
+                    ),
+                )
+                semantic_knowledge = SemanticKnowledgeArchitecture(
+                    semantic_config
+                )
+                print(
+                    f"[checkpoint binding refreshed: "
+                    f"{len(semantic_config.checkpoint_fingerprints or ())} "
+                    "fingerprint(s)]"
+                )
                 load_concept_calibration(calibration_path, device)
                 history.clear()
                 last_user_text = None
