@@ -42,8 +42,8 @@ def main() -> None:
             "量子センサーは、量子的性質を利用して"
             "高感度計測を行うセンサーである。"
         )
-        blackhole_q = "ブラックホールとは"
-        blackhole_a = "ブラックホールは、非常に強い重力を持つ天体である。"
+        blackhole_q = "未学習架空装置とは"
+        blackhole_a = "未学習架空装置は、架空の検証用装置である。"
 
         rows = [
             {"user": quantum_q, "assistant": quantum_a, "source": "chat-manual"},
@@ -94,7 +94,7 @@ def main() -> None:
             f"{quantum_unknown=}, {quantum_focus=}",
         )
 
-        blackhole = internalized_record_for_focus(records, "ブラックホール")
+        blackhole = internalized_record_for_focus(records, "未学習架空装置")
         check("untrained-route-absent", blackhole is None, str(blackhole))
 
         blackhole_unknown, blackhole_focus = pre_generation_unknown_concept(
@@ -103,7 +103,7 @@ def main() -> None:
         )
         check(
             "untrained-stays-unknown",
-            blackhole_unknown and blackhole_focus == "ブラックホール",
+            blackhole_unknown and blackhole_focus == "未学習架空装置",
             f"{blackhole_unknown=}, {blackhole_focus=}",
         )
 
