@@ -76,6 +76,7 @@ class SemanticKnowledgeConfig:
     raw_corpus_path: Path
     truth_store_path: Path
     canonical_definitions: Mapping[str, str]
+    checkpoint_fingerprints: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -262,6 +263,11 @@ class SemanticKnowledgeArchitecture:
             learning_state=self.config.learning_state,
             raw_corpus_path=self.config.raw_corpus_path,
                 canonical_definitions=self.config.canonical_definitions,
+                checkpoint_fingerprints=(
+                    set(self.config.checkpoint_fingerprints)
+                    if self.config.checkpoint_fingerprints is not None
+                    else None
+                ),
             )
         base_dispatch = dispatch_knowledge_state(state)
         dispatch = base_dispatch
@@ -346,7 +352,7 @@ class SemanticKnowledgeArchitecture:
     def status(self) -> dict[str, object]:
         return {
             "architecture": "Semantic Knowledge Architecture",
-            "version": "v10.11.5",
+            "version": "v10.11.6",
             "proposition_path": str(self.config.proposition_path),
             "subject_index_path": str(self.config.subject_index_path),
             "typed_index_path": str(self.config.typed_index_path),
@@ -355,6 +361,11 @@ class SemanticKnowledgeArchitecture:
             "learning_state": str(self.config.learning_state),
             "raw_corpus_path": str(self.config.raw_corpus_path),
             "truth_store_path": str(self.config.truth_store_path),
+            "checkpoint_fingerprint_count": (
+                len(self.config.checkpoint_fingerprints)
+                if self.config.checkpoint_fingerprints is not None
+                else -1
+            ),
             "layers": (
                 "proposition",
                 "subject-index",
