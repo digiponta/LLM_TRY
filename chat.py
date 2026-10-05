@@ -2345,7 +2345,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.11.2 Bare Concept Semantic Routing")
+    print(" LLM_TRY Chat - v10.11.3 Bare Unknown Safety Gate")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2926,6 +2926,8 @@ def main() -> None:
                     f"truth_runtime={runtime_text}, "
                     f"truth_warning={warning_text!r}, "
                     f"bare_routed={result.bare_concept_routed}, "
+                    f"bare_unknown_blocked={result.bare_unknown_blocked}, "
+                    f"bare_focus={result.bare_focus!r}, "
                     f"routed_query={result.routed_query!r}, "
                     f"provenance={provenance_text}]"
                 )
@@ -2948,6 +2950,8 @@ def main() -> None:
                     f"retrieval={state.is_retrieval}, "
                     f"model_generation={state.permits_model_generation}, "
                     f"bare_routed={result.bare_concept_routed}, "
+                    f"bare_unknown_blocked={result.bare_unknown_blocked}, "
+                    f"bare_focus={result.bare_focus!r}, "
                     f"routed_query={result.routed_query!r}, "
                     f"reason={state.reason}]"
                 )
@@ -3275,6 +3279,12 @@ def main() -> None:
             print(
                 f"[semantic bare routing: {user_text!r} -> "
                 f"{resolver_query!r}]"
+            )
+        elif semantic_result.bare_unknown_blocked:
+            print(
+                f"[bare unknown safety gate: "
+                f"concept={semantic_result.bare_focus!r}, "
+                "generation=blocked]"
             )
         knowledge_state = semantic_result.knowledge_state
         dispatch = semantic_result.dispatch
