@@ -2323,7 +2323,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.10.1 Knowledge State Dispatcher")
+    print(" LLM_TRY Chat - v10.10.2 Provenance / Source Tracking")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2443,6 +2443,7 @@ def main() -> None:
     print("  /internalized list concepts proven consumed by /train")
     print("  /kstate Q     inspect resolved knowledge state for query Q")
     print("  /dispatch Q   inspect dispatcher action for query Q")
+    print("  /provenance Q inspect source/origin evidence for query Q")
     print("  /exit         quit")
     print()
 
@@ -2635,6 +2636,49 @@ def main() -> None:
             print()
             continue
 
+        if command.startswith("/provenance "):
+            query = user_text[len("/provenance "):].strip()
+            if not query:
+                print("[usage: /provenance QUERY]")
+            else:
+                state = resolve_knowledge_state(
+                    query,
+                    typed_index_path=typed_subject_index_path,
+                    subject_index_path=subject_index_path,
+                    unified_path=unified_semantic_path,
+                    learning_log=learning_log,
+                    learning_state=learning_state,
+                    raw_corpus_path=resolve_runtime_path(
+                        DEFAULT_RAW_KNOWLEDGE_CORPUS
+                    ),
+                    canonical_definitions=CANONICAL_DEFINITIONS,
+                )
+                provenance = state.provenance
+                if provenance is None:
+                    print("[provenance: none]")
+                else:
+                    print(
+                        f"[provenance state={state.state}, "
+                        f"focus={state.focus!r}, "
+                        f"source={provenance.source!r}, "
+                        f"origin={provenance.origin!r}, "
+                        f"priority={provenance.retrieval_priority}, "
+                        f"timestamp={provenance.timestamp!r}, "
+                        f"fingerprint={provenance.fingerprint!r}, "
+                        f"evidence={provenance.evidence!r}]"
+                    )
+                    if provenance.metadata:
+                        print(
+                            "[provenance metadata: "
+                            + ", ".join(
+                                f"{key}={value}"
+                                for key, value in provenance.metadata.items()
+                            )
+                            + "]"
+                        )
+            print()
+            continue
+
         if command.startswith("/dispatch "):
             query = user_text[len("/dispatch "):].strip()
             if not query:
@@ -2653,6 +2697,11 @@ def main() -> None:
                     canonical_definitions=CANONICAL_DEFINITIONS,
                 )
                 dispatch = dispatch_knowledge_state(state)
+                provenance_text = (
+                    dispatch.provenance.compact()
+                    if dispatch.provenance is not None
+                    else "none"
+                )
                 print(
                     f"[dispatch action={dispatch.action}, "
                     f"state={dispatch.state}, "
@@ -2660,7 +2709,8 @@ def main() -> None:
                     f"predicate_type={dispatch.predicate_type!r}, "
                     f"terminal={dispatch.is_terminal}, "
                     f"route={dispatch.route}, "
-                    f"reason={dispatch.reason}]"
+                    f"reason={dispatch.reason}, "
+                    f"provenance={provenance_text}]"
                 )
                 if dispatch.answer:
                     print(f"[dispatch answer: {dispatch.answer}]")
@@ -3031,10 +3081,16 @@ def main() -> None:
                 if dispatch.predicate_type
                 else ""
             )
+            provenance_text = (
+                dispatch.provenance.compact()
+                if dispatch.provenance is not None
+                else "none"
+            )
             print(
                 f"[gate=KNOWN, knowledge_state={dispatch.state}, "
                 f"concept={dispatch.focus}{predicate_part}, "
-                f"route={dispatch.route}, reason={dispatch.reason}]"
+                f"route={dispatch.route}, reason={dispatch.reason}, "
+                f"provenance={provenance_text}]"
             )
             print("[0 generated probe tokens, retrieval]")
             print()
@@ -3082,10 +3138,15 @@ def main() -> None:
                 "[teaching path: /teach ANSWER -> /train "
                 "(or /teachq QUESTION => ANSWER)]"
             )
+            provenance_text = (
+                dispatch.provenance.compact()
+                if dispatch.provenance is not None
+                else "none"
+            )
             print(
                 "[gate=UNKNOWN, resolution=UNKNOWN_KNOWLEDGE, "
                 "action=retrieve/teach, route=knowledge-state-dispatcher, "
-                f"reason={dispatch.reason}]"
+                f"reason={dispatch.reason}, provenance={provenance_text}]"
             )
             print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
             print()
