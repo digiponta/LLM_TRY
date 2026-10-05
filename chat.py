@@ -60,6 +60,10 @@ from typed_subject_proposition_v10100 import (
     typed_subject_mapping,
     typed_subject_rows,
 )
+from internalized_knowledge_v10100 import (
+    internalized_record_for_focus,
+    load_internalized_records,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -2885,6 +2889,7 @@ def main() -> None:
             continue
 
         last_user_text = user_text
+        internalized_record = None
 
         input_ok, input_reason = input_quality_check(user_text)
         if not input_ok:
@@ -3051,6 +3056,26 @@ def main() -> None:
                 )
             continue
 
+        internalized_focus = extract_concept_query_focus(user_text)
+        if not internalized_focus:
+            internalized_focus = extract_definition_focus(user_text) or ""
+        if internalized_focus:
+            internalized_records = load_internalized_records(
+                learning_log,
+                learning_state,
+            )
+            internalized_record = internalized_record_for_focus(
+                internalized_records,
+                internalized_focus,
+            )
+            if internalized_record is not None:
+                print(
+                    "[internalized route: "
+                    f"concept={internalized_record.concept!r}, "
+                    f"source={internalized_record.source}, "
+                    "generation=model-weights]"
+                )
+
         if args.unknown_rejection:
             promoted_concepts = trained_known_concepts(
                 learning_log,
@@ -3060,6 +3085,9 @@ def main() -> None:
                 user_text,
                 promoted_concepts=promoted_concepts,
             )
+            if internalized_record is not None:
+                pre_unknown = False
+                pre_focus = internalized_record.concept
             if pre_unknown:
                 route_result = route_resolution_action(
                     args=args,
@@ -3092,7 +3120,11 @@ def main() -> None:
                 last_ai_reply = None
                 continue
 
-        generation_user_text = normalize_identity_query(user_text)
+        generation_user_text = (
+            internalized_record.question
+            if internalized_record is not None
+            else normalize_identity_query(user_text)
+        )
         prompt, selected_history = build_prompt(
             history=history,
             user_text=generation_user_text,
@@ -3228,6 +3260,9 @@ def main() -> None:
             reason=reason,
         )
 
+        if accepted and internalized_record is not None:
+            route_result = "internalized model generation"
+
         reply = primary.text if accepted else UNKNOWN_REPLY
         new_tokens = sum(r.token_count for r in results)
 
@@ -3246,10 +3281,18 @@ def main() -> None:
             print(f"[candidate={primary.text}]")
 
         if args.show_risk and args.unknown_rejection:
-            status = "KNOWN" if accepted else "UNKNOWN"
+            if accepted and internalized_record is not None:
+                status = "INTERNALIZED"
+            else:
+                status = "KNOWN" if accepted else "UNKNOWN"
             semantic_part = ""
             if args.semantic_consistency:
                 slot_text = "|".join(slots) if slots else "-"
+                internalized_part = (
+                    f", internalized_concept={internalized_record.concept}"
+                    if internalized_record is not None
+                    else ""
+                )
                 semantic_part = (
                     f", intent={intent}"
                     f", slots={slot_text}"
@@ -3265,7 +3308,8 @@ def main() -> None:
                 f"mean_margin={primary.mean_top2_margin:.3f}, "
                 f"agreement={agreement:.3f}, "
                 f"sem_agreement={semantic_agreement:.3f}"
-                f"{semantic_part}, "
+                f"{semantic_part}"
+                f"{internalized_part}, "
                 f"context_turns={len(selected_history)}, "
                 f"resolution={resolution}, action={action}, "
                 f"route={route_result}, reason={reason}]"
