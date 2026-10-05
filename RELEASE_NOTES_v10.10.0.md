@@ -299,3 +299,79 @@ Expected final status:
 ~~~text
 INTERNALIZED_CONSOLIDATION_PASS
 ~~~
+
+
+## Knowledge State Resolver
+
+v10.10.0 now resolves explicit concept queries into one knowledge state before
+runtime routing.
+
+Priority:
+
+~~~text
+TYPED
+  ↓
+CANONICAL
+  ↓
+UNIFIED
+  ↓
+INTERNALIZED
+  ↓
+RAW_CORPUS_ONLY
+  ↓
+UNKNOWN
+~~~
+
+A seventh state, NON_CONCEPT, is used for ordinary chat inputs that are not
+explicit concept queries.
+
+### State policy
+
+~~~text
+TYPED           -> deterministic retrieval
+CANONICAL       -> deterministic retrieval
+UNIFIED         -> deterministic retrieval
+INTERNALIZED    -> model generation + normal output gate
+RAW_CORPUS_ONLY -> generation blocked; UNKNOWN_KNOWLEDGE route
+UNKNOWN         -> UNKNOWN_KNOWLEDGE route
+NON_CONCEPT     -> ordinary model generation
+~~~
+
+The important change is RAW_CORPUS_ONLY. A concept appearing in the raw corpus
+is no longer treated as sufficient evidence that the model can answer it.
+This prevents cases such as "時間とは" from consuming probe-generation tokens
+only to be rejected later.
+
+Expected runtime behavior:
+
+~~~text
+時間とは
+AI> 未学習です
+[knowledge-state=RAW_CORPUS_ONLY, concept=時間, generation=blocked]
+[0 generated probe tokens, 0.00s, 0.0 tok/s]
+~~~
+
+### Inspection
+
+~~~text
+/kstate CPUとは
+/kstate 宇宙とは
+/kstate 量子センサーとは
+/kstate 時間とは
+~~~
+
+reports the resolved knowledge state without executing the normal answer route.
+
+### Verification
+
+~~~powershell
+python .\run_knowledge_state_resolver_v10100.py
+python .\run_knowledge_state_runtime_policy_v10100.py
+~~~
+
+Expected statuses:
+
+~~~text
+KNOWLEDGE_STATE_RESOLVER_PASS
+KNOWLEDGE_STATE_RUNTIME_POLICY_PASS
+~~~
