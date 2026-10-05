@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from semantic_proposition_v1090 import compose_subject, load_propositions
+from typed_subject_proposition_v10100 import classify_predicate_type
 
 
 def load_unified_rows(path: Path) -> List[Dict[str, object]]:
@@ -59,6 +60,7 @@ def upsert_unified_concept(
     *,
     source: str = "atomic-proposition",
     atomic_count: int | None = None,
+    predicate_types: List[str] | None = None,
 ) -> Dict[str, object]:
     concept = str(concept).strip()
     assistant = str(assistant).strip()
@@ -73,6 +75,11 @@ def upsert_unified_concept(
     }
     if atomic_count is not None:
         replacement["atomic_count"] = int(atomic_count)
+    if predicate_types:
+        replacement["predicate_types"] = list(dict.fromkeys(predicate_types))
+        replacement["semantic_schema"] = (
+            "subject-predicate-type-statement-v10.10.0"
+        )
 
     out: List[Dict[str, object]] = []
     replaced = False
@@ -113,12 +120,19 @@ def sync_subject_from_propositions(
     if not assistant:
         return None
 
+    predicate_types: List[str] = []
+    for proposition in propositions:
+        predicate_type = classify_predicate_type(proposition.value)
+        if predicate_type not in predicate_types:
+            predicate_types.append(predicate_type)
+
     return upsert_unified_concept(
         unified_path,
         subject,
         assistant,
         source="atomic-proposition",
         atomic_count=len(propositions),
+        predicate_types=predicate_types,
     )
 
 
