@@ -88,6 +88,8 @@ class SemanticKnowledgeResult:
     truth_result: TruthDispatchResult | None = None
     routed_query: str = ""
     bare_concept_routed: bool = False
+    bare_unknown_blocked: bool = False
+    bare_focus: str = ""
 
     @property
     def action(self) -> str:
@@ -161,6 +163,13 @@ class SemanticKnowledgeSnapshot:
 class SemanticKnowledgeArchitecture:
     """Single runtime/control surface for semantic knowledge."""
 
+    BARE_CONVERSATIONAL_ALLOWLIST = {
+        "長門",
+        "長門有希",
+        "hello",
+        "hi",
+    }
+
     def __init__(self, config: SemanticKnowledgeConfig):
         self.config = config
 
@@ -219,19 +228,41 @@ class SemanticKnowledgeArchitecture:
         self,
         query: str,
     ) -> SemanticKnowledgeResult:
+        bare_focus = self._bare_concept_focus(query)
         routed_query, bare_concept_routed = (
             self.canonicalize_bare_semantic_query(query)
         )
-        state = resolve_knowledge_state(
-            routed_query,
+
+        bare_unknown_blocked = (
+            bool(bare_focus)
+            and not bare_concept_routed
+            and bare_focus.lower()
+            not in {
+                item.lower()
+                for item in self.BARE_CONVERSATIONAL_ALLOWLIST
+            }
+        )
+
+        if bare_unknown_blocked:
+            state = KnowledgeState(
+                state="UNKNOWN",
+                focus=bare_focus,
+                reason=(
+                    "bare concept lacks validated semantic "
+                    "or conversational evidence"
+                ),
+            )
+        else:
+            state = resolve_knowledge_state(
+                routed_query,
             typed_index_path=self.config.typed_index_path,
             subject_index_path=self.config.subject_index_path,
             unified_path=self.config.unified_path,
             learning_log=self.config.learning_log,
             learning_state=self.config.learning_state,
             raw_corpus_path=self.config.raw_corpus_path,
-            canonical_definitions=self.config.canonical_definitions,
-        )
+                canonical_definitions=self.config.canonical_definitions,
+            )
         base_dispatch = dispatch_knowledge_state(state)
         dispatch = base_dispatch
         truth = None
@@ -259,6 +290,8 @@ class SemanticKnowledgeArchitecture:
             truth_result=truth_result,
             routed_query=routed_query,
             bare_concept_routed=bare_concept_routed,
+            bare_unknown_blocked=bare_unknown_blocked,
+            bare_focus=bare_focus,
         )
 
     def teach_proposition(
@@ -313,7 +346,7 @@ class SemanticKnowledgeArchitecture:
     def status(self) -> dict[str, object]:
         return {
             "architecture": "Semantic Knowledge Architecture",
-            "version": "v10.11.2",
+            "version": "v10.11.3",
             "proposition_path": str(self.config.proposition_path),
             "subject_index_path": str(self.config.subject_index_path),
             "typed_index_path": str(self.config.typed_index_path),
