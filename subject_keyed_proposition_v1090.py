@@ -25,6 +25,7 @@ from typing import Dict, Iterable, List
 
 from semantic_proposition_v1090 import (
     Proposition,
+    compose_propositions,
     load_propositions,
     normalize_fragment,
 )
@@ -191,3 +192,16 @@ def subject_index_dict(
     for row in load_subject_index(index_path):
         result.setdefault(row.subject, []).append(row.statement)
     return result
+
+
+def compose_subject_from_index(
+    index_path: Path,
+    subject: str,
+) -> str:
+    """Compose a subject's indexed atomic statements into one canonical answer."""
+    rows = subject_statements(index_path, subject)
+    propositions = [
+        Proposition(row.subject, row.value)
+        for row in rows
+    ]
+    return compose_propositions(propositions, subject=subject)
