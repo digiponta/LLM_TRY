@@ -3273,17 +3273,28 @@ def main() -> None:
             continue
 
         if dispatch.action == "BLOCK":
-            route_result = route_resolution_action(
-                args=args,
-                resolution="UNKNOWN_KNOWLEDGE",
-                action="retrieve/teach",
-                user_text=resolver_query,
-                candidate_answer="",
-                reason=(
-                    f"knowledge state {dispatch.state}: "
-                    f"{dispatch.reason}"
-                ),
+            truth_block = (
+                truth_result is not None
+                and truth_result.runtime_status == "BLOCK"
             )
+            if truth_block:
+                route_result = "truth-state block"
+                resolution_name = "TRUTH_BLOCK"
+                action_name = "review/correct"
+            else:
+                route_result = route_resolution_action(
+                    args=args,
+                    resolution="UNKNOWN_KNOWLEDGE",
+                    action="retrieve/teach",
+                    user_text=resolver_query,
+                    candidate_answer="",
+                    reason=(
+                        f"knowledge state {dispatch.state}: "
+                        f"{dispatch.reason}"
+                    ),
+                )
+                resolution_name = "UNKNOWN_KNOWLEDGE"
+                action_name = "retrieve/teach"
             block_reply = (
                 truth_result.user_message
                 if truth_result is not None
@@ -3297,10 +3308,16 @@ def main() -> None:
                 f"concept={dispatch.focus}, generation=blocked]"
             )
             print(f"[route={route_result}]")
-            print(
-                "[teaching path: /teach ANSWER -> /train "
-                "(or /teachq QUESTION => ANSWER)]"
-            )
+            if truth_block:
+                print(
+                    "[truth path: set a correction with "
+                    "/truthset CONCEPT FALSE|OUTDATED => CORRECTION]"
+                )
+            else:
+                print(
+                    "[teaching path: /teach ANSWER -> /train "
+                    "(or /teachq QUESTION => ANSWER)]"
+                )
             provenance_text = (
                 dispatch.provenance.compact()
                 if dispatch.provenance is not None
@@ -3311,11 +3328,16 @@ def main() -> None:
                 if truth_record is not None
                 else ""
             )
+            truth_runtime_part = (
+                f", truth_runtime={truth_result.runtime_status}"
+                if truth_result is not None
+                else ""
+            )
             print(
-                "[gate=UNKNOWN, resolution=UNKNOWN_KNOWLEDGE, "
-                "action=retrieve/teach, route=knowledge-state-dispatcher, "
+                f"[gate=UNKNOWN, resolution={resolution_name}, "
+                f"action={action_name}, route={dispatch.route}, "
                 f"reason={dispatch.reason}, provenance={provenance_text}"
-                f"{truth_part}]"
+                f"{truth_part}{truth_runtime_part}]"
             )
             print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
             print()
