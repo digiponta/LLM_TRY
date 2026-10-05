@@ -157,6 +157,24 @@ class GenerationResult:
     mean_top2_margin: float
 
 
+@dataclass(frozen=True)
+class CompositeFidelityResult:
+    semantic_similarity: float
+    lexical_coverage: float
+    required_coverage: float
+    contradiction: bool
+    required_terms: tuple[str, ...] = ()
+    matched_terms: tuple[str, ...] = ()
+
+    @property
+    def missing_terms(self) -> tuple[str, ...]:
+        matched = set(self.matched_terms)
+        return tuple(
+            term for term in self.required_terms
+            if term not in matched
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Chat with the current LLM_GPU conversational model."
@@ -274,10 +292,19 @@ def parse_args() -> argparse.Namespace:
         "--min-internalized-fidelity",
         type=float,
         default=0.90,
-        help=(
-            "Minimum cosine similarity between INTERNALIZED output "
-            "and its trusted teacher answer."
-        ),
+        help="Minimum teacher semantic similarity for INTERNALIZED output.",
+    )
+    parser.add_argument(
+        "--min-internalized-lexical-coverage",
+        type=float,
+        default=0.45,
+        help="Minimum teacher character-bigram coverage.",
+    )
+    parser.add_argument(
+        "--min-internalized-required-coverage",
+        type=float,
+        default=0.50,
+        help="Minimum required-content term coverage.",
     )
     parser.add_argument(
         "--semantic-consistency",
@@ -1203,22 +1230,170 @@ def internalized_teacher_fidelity(
     return float(torch.dot(generated_vector, teacher_vector).item())
 
 
-def apply_internalized_fidelity_policy(
+def _teacher_lexical_coverage(
+    generated_answer: str,
+    teacher_answer: str,
+) -> float:
+    teacher = _char_ngrams(teacher_answer, n=2)
+    generated = _char_ngrams(generated_answer, n=2)
+    if not teacher:
+        return 0.0
+    return len(teacher & generated) / len(teacher)
+
+
+def _required_teacher_terms(
+    teacher_answer: str,
+    concept: str = "",
+) -> tuple[str, ...]:
+    text = _normalize_for_similarity(teacher_answer)
+    concept_norm = _normalize_for_similarity(concept)
+    if concept_norm and text.startswith(concept_norm):
+        text = text[len(concept_norm):]
+    text = re.sub(r"^(?:は|とは)", "", text)
+    text = re.sub(r"(?:である|です|だ)$", "", text)
+
+    parts = re.split(
+        r"(?:を|に|で|が|は|と|して|する|行う|利用|ため|の)",
+        text,
+    )
+    stop = {
+        "もの", "こと", "ため", "これ", "それ",
+        "ある", "いる", "なる", "できる",
+    }
+    terms: list[str] = []
+    for part in parts:
+        term = part.strip()
+        if len(term) < 2 or term in stop:
+            continue
+        if term not in terms:
+            terms.append(term)
+
+    # Preserve the terminal category noun when it is informative.
+    category_match = re.search(
+        r"([一-龯々ァ-ヶーA-Za-z0-9]{2,12})(?:である|です|だ)$",
+        teacher_answer.strip(),
+    )
+    if category_match:
+        category = category_match.group(1)
+        if (
+            category != concept
+            and category not in terms
+            and len(category) >= 2
+        ):
+            terms.append(category)
+
+    return tuple(terms[:8])
+
+
+def _required_content_coverage(
+    generated_answer: str,
+    teacher_answer: str,
+    concept: str = "",
+) -> tuple[float, tuple[str, ...], tuple[str, ...]]:
+    required = _required_teacher_terms(
+        teacher_answer,
+        concept=concept,
+    )
+    if not required:
+        return 1.0, (), ()
+    generated_norm = _normalize_for_similarity(generated_answer)
+    matched = tuple(
+        term for term in required
+        if _normalize_for_similarity(term) in generated_norm
+    )
+    return len(matched) / len(required), required, matched
+
+
+def _polarity_contradiction(
+    generated_answer: str,
+    teacher_answer: str,
+) -> bool:
+    negative_patterns = (
+        r"ではない", r"でない", r"しない", r"できない",
+        r"行わない", r"利用しない", r"不可能", r"存在しない",
+    )
+    teacher_negative = any(
+        re.search(pattern, teacher_answer)
+        for pattern in negative_patterns
+    )
+    generated_negative = any(
+        re.search(pattern, generated_answer)
+        for pattern in negative_patterns
+    )
+    return teacher_negative != generated_negative
+
+
+@torch.no_grad()
+def composite_internalized_teacher_fidelity(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    generated_answer: str,
+    teacher_answer: str,
+    concept: str = "",
+) -> CompositeFidelityResult:
+    semantic = internalized_teacher_fidelity(
+        model=model,
+        tokenizer=tokenizer,
+        generated_answer=generated_answer,
+        teacher_answer=teacher_answer,
+    )
+    lexical = _teacher_lexical_coverage(
+        generated_answer,
+        teacher_answer,
+    )
+    required_coverage, required, matched = (
+        _required_content_coverage(
+            generated_answer,
+            teacher_answer,
+            concept=concept,
+        )
+    )
+    contradiction = _polarity_contradiction(
+        generated_answer,
+        teacher_answer,
+    )
+    return CompositeFidelityResult(
+        semantic_similarity=semantic,
+        lexical_coverage=lexical,
+        required_coverage=required_coverage,
+        contradiction=contradiction,
+        required_terms=required,
+        matched_terms=matched,
+    )
+
+
+def apply_composite_internalized_fidelity_policy(
     accepted: bool,
-    fidelity: float,
-    threshold: float,
+    result: CompositeFidelityResult,
+    *,
+    semantic_threshold: float,
+    lexical_threshold: float,
+    required_threshold: float,
 ) -> tuple[bool, str]:
+    failures: list[str] = []
+    if result.semantic_similarity < semantic_threshold:
+        failures.append(
+            "semantic "
+            f"{result.semantic_similarity:.3f} < {semantic_threshold:.3f}"
+        )
+    if result.lexical_coverage < lexical_threshold:
+        failures.append(
+            "lexical "
+            f"{result.lexical_coverage:.3f} < {lexical_threshold:.3f}"
+        )
+    if result.required_coverage < required_threshold:
+        failures.append(
+            "required "
+            f"{result.required_coverage:.3f} < {required_threshold:.3f}"
+        )
+    if result.contradiction:
+        failures.append("contradiction detected")
+
+    if failures:
+        return False, "composite teacher fidelity: " + "; ".join(failures)
     if not accepted:
         return False, ""
-    if fidelity < threshold:
-        return (
-            False,
-            (
-                "internalized teacher fidelity "
-                f"{fidelity:.3f} < {threshold:.3f}"
-            ),
-        )
-    return True, "internalized teacher fidelity passed"
+    return True, "composite teacher fidelity passed"
 
 
 SLOT_ALIASES = {
@@ -2404,7 +2579,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.11.7 Internalized Fidelity Gate")
+    print(" LLM_TRY Chat - v10.11.8 Composite Teacher Fidelity Gate")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2427,7 +2602,15 @@ def print_info(
         print("Min mean margin :", args.min_mean_margin)
         print("Min agreement   :", args.min_agreement)
         print("Min sem agree   :", args.min_semantic_agreement)
-        print("Min int fidelity:", args.min_internalized_fidelity)
+        print("Min int semantic:", args.min_internalized_fidelity)
+        print(
+            "Min int lexical :",
+            args.min_internalized_lexical_coverage,
+        )
+        print(
+            "Min int required:",
+            args.min_internalized_required_coverage,
+        )
         print("Fallback        :", UNKNOWN_REPLY)
         print("Context policy  : minimal")
         print("Teaching queue  :", args.teaching_queue)
@@ -3801,24 +3984,51 @@ def main() -> None:
             # Preserve diagnostic reasons such as "semantic probe agreement".
 
         internalized_fidelity = -1.0
+        internalized_lexical_coverage = -1.0
+        internalized_required_coverage = -1.0
+        internalized_contradiction = False
+        internalized_missing_terms: tuple[str, ...] = ()
         if internalized_record is not None:
-            internalized_fidelity = internalized_teacher_fidelity(
+            composite_fidelity = composite_internalized_teacher_fidelity(
                 model=model,
                 tokenizer=tokenizer,
                 generated_answer=primary.text,
                 teacher_answer=internalized_record.teacher_answer,
+                concept=internalized_record.concept,
+            )
+            internalized_fidelity = (
+                composite_fidelity.semantic_similarity
+            )
+            internalized_lexical_coverage = (
+                composite_fidelity.lexical_coverage
+            )
+            internalized_required_coverage = (
+                composite_fidelity.required_coverage
+            )
+            internalized_contradiction = (
+                composite_fidelity.contradiction
+            )
+            internalized_missing_terms = (
+                composite_fidelity.missing_terms
             )
             fidelity_ok, fidelity_reason = (
-                apply_internalized_fidelity_policy(
+                apply_composite_internalized_fidelity_policy(
                     accepted=accepted,
-                    fidelity=internalized_fidelity,
-                    threshold=args.min_internalized_fidelity,
+                    result=composite_fidelity,
+                    semantic_threshold=args.min_internalized_fidelity,
+                    lexical_threshold=(
+                        args.min_internalized_lexical_coverage
+                    ),
+                    required_threshold=(
+                        args.min_internalized_required_coverage
+                    ),
                 )
             )
-            if accepted and not fidelity_ok:
+            if not fidelity_ok:
                 accepted = False
-                reason = fidelity_reason
-            elif accepted and fidelity_ok:
+                if fidelity_reason:
+                    reason = fidelity_reason
+            elif accepted:
                 reason = fidelity_reason
 
         resolution, action = classify_resolution(
@@ -3869,8 +4079,14 @@ def main() -> None:
             internalized_part = (
                 (
                     f", internalized_concept={internalized_record.concept}"
-                    f", teacher_fidelity={internalized_fidelity:.3f}"
+                    f", teacher_sem={internalized_fidelity:.3f}"
+                    f", teacher_lex={internalized_lexical_coverage:.3f}"
+                    f", teacher_req={internalized_required_coverage:.3f}"
+                    f", teacher_contra={internalized_contradiction}"
                     f", fidelity_th={args.min_internalized_fidelity:.3f}"
+                    f", lex_th={args.min_internalized_lexical_coverage:.3f}"
+                    f", req_th={args.min_internalized_required_coverage:.3f}"
+                    f", missing={'|'.join(internalized_missing_terms) or '-'}"
                 )
                 if internalized_record is not None
                 else ""
