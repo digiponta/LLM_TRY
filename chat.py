@@ -91,6 +91,13 @@ from knowledge_promotion_v10114 import (
     pending_knowledge_requests,
     promote_knowledge,
 )
+from internalized_verification_v10119 import (
+    active_verifications,
+    mark_retrain as mark_internalized_verification_retrain,
+    mark_verified as mark_internalized_verification_verified,
+    upsert_unstable as upsert_internalized_unstable,
+    verification_summary,
+)
 from knowledge_queue_lifecycle_v10115 import (
     consolidate_legacy_resolved,
     lifecycle_summary,
@@ -116,6 +123,9 @@ DEFAULT_PROPOSITION_STORE = "data/semantic_propositions_v1090.jsonl"
 DEFAULT_SUBJECT_INDEX = "data/subject_keyed_propositions_v1090.jsonl"
 DEFAULT_TYPED_SUBJECT_INDEX = "data/typed_subject_propositions_v10100.jsonl"
 DEFAULT_TRUTH_STORE = "data/truth_state_v10103.jsonl"
+DEFAULT_INTERNALIZED_VERIFICATION = (
+    "data/internalized_verification_v10119.jsonl"
+)
 
 USER_PREFIX = "人: "
 AI_PREFIX = "AI: "
@@ -217,6 +227,11 @@ def parse_args() -> argparse.Namespace:
         "--truth-store",
         default=DEFAULT_TRUTH_STORE,
         help="Persistent concept truth-state overlay.",
+    )
+    parser.add_argument(
+        "--internalized-verification",
+        default=DEFAULT_INTERNALIZED_VERIFICATION,
+        help="Persistent INTERNALIZED_UNSTABLE verification loop store.",
     )
     parser.add_argument(
         "--learn",
@@ -2598,7 +2613,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.11.8 Composite Teacher Fidelity Gate")
+    print(" LLM_TRY Chat - v10.11.9 Internalized Verification Loop")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2757,6 +2772,8 @@ def main() -> None:
     print("  /semantic X   inspect all semantic knowledge layers for X")
     print("  /promotions   list pending UNKNOWN_KNOWLEDGE requests")
     print("  /promotionstatus show pending/promoted/verified lifecycle counts")
+    print("  /verifystatus show internalized verification loop counts")
+    print("  /verifications list active internalized verification tasks")
     print("  /promote X => STATEMENT  promote pending concept to semantic knowledge")
     print("  /exit         quit")
     print()
@@ -2936,6 +2953,47 @@ def main() -> None:
                 f"typed_index={sync.typed_index_count}, "
                 f"unified_subjects={sync.unified_subject_count}]"
             )
+            print()
+            continue
+
+        if command == "/verifystatus":
+            summary = verification_summary(
+                Path(args.internalized_verification)
+            )
+            print(
+                f"[internalized verification: "
+                f"pending={summary.pending}, "
+                f"retrain={summary.retrain}, "
+                f"verified={summary.verified}, "
+                f"failed={summary.failed}, "
+                f"total={summary.total}]"
+            )
+            print()
+            continue
+
+        if command == "/verifications":
+            rows = active_verifications(
+                Path(args.internalized_verification)
+            )
+            if not rows:
+                print("[internalized verifications: no active tasks]")
+            else:
+                print(
+                    f"[internalized verifications: {len(rows)} active task(s)]"
+                )
+                for index, row in enumerate(rows, 1):
+                    missing = "|".join(
+                        str(x) for x in row.get("missing_terms", [])
+                    ) or "-"
+                    print(
+                        f"  {index:02d}. concept={row.get('concept', '')!r} "
+                        f"status={row.get('status', '')} "
+                        f"attempts={row.get('attempts', 0)} "
+                        f"semantic={float(row.get('semantic', 0.0)):.3f} "
+                        f"lexical={float(row.get('lexical', 0.0)):.3f} "
+                        f"required={float(row.get('required', 0.0)):.3f} "
+                        f"missing={missing}"
+                    )
             print()
             continue
 
@@ -4058,7 +4116,41 @@ def main() -> None:
         if internalized_record is not None and not accepted:
             resolution = "INTERNALIZED_UNSTABLE"
             action = "retrain/review"
-            route_result = "internalized fidelity block"
+            verification_path = Path(
+                args.internalized_verification
+            )
+            upsert_internalized_unstable(
+                verification_path,
+                concept=internalized_record.concept,
+                question=internalized_record.question,
+                teacher_answer=internalized_record.teacher_answer,
+                candidate_answer=primary.text,
+                reason=reason,
+                semantic=internalized_fidelity,
+                lexical=internalized_lexical_coverage,
+                required=internalized_required_coverage,
+                contradiction=internalized_contradiction,
+                missing_terms=internalized_missing_terms,
+                fingerprint=internalized_record.fingerprint,
+            )
+            reactivated = mark_pair_for_retraining(
+                learning_state,
+                internalized_record.question,
+                internalized_record.teacher_answer,
+            )
+            if reactivated:
+                mark_internalized_verification_retrain(
+                    verification_path,
+                    internalized_record.fingerprint,
+                )
+            route_result = (
+                "internalized verification loop: "
+                + (
+                    "trusted pair reactivated for /train"
+                    if reactivated
+                    else "verification task pending/retrain"
+                )
+            )
         else:
             route_result = route_resolution_action(
                 args=args,
@@ -4070,7 +4162,14 @@ def main() -> None:
             )
 
         if accepted and internalized_record is not None:
+            verified = mark_internalized_verification_verified(
+                Path(args.internalized_verification),
+                internalized_record.concept,
+                internalized_record.fingerprint,
+            )
             route_result = "internalized model generation"
+            if verified:
+                route_result += f"; verification resolved={verified}"
 
         reply = primary.text if accepted else UNKNOWN_REPLY
         new_tokens = sum(r.token_count for r in results)
