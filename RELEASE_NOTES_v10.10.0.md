@@ -163,3 +163,75 @@ Expected final statuses:
 TYPED_QUERY_ROUTING_PASS
 TYPED_QUERY_END_TO_END_PASS
 ~~~
+
+
+## Internalized Knowledge Route
+
+v10.10.0 now distinguishes knowledge that has actually been consumed by
+incremental training from external semantic retrieval.
+
+A concept is marked INTERNALIZED only when:
+
+~~~text
+trusted teaching pair
+      ↓
+/train
+      ↓
+pair fingerprint recorded in chat_learning_state.json
+      ↓
+Internalized Knowledge Registry
+~~~
+
+Merely adding a teaching pair is not sufficient.
+
+### Runtime order
+
+~~~text
+Typed Semantic Retrieval
+      ↓ miss
+Canonical Definition Retrieval
+      ↓ miss
+Unified Semantic Memory
+      ↓ miss
+Internalized Knowledge Route
+      ├ INTERNALIZED -> model generation + normal output gate
+      └ otherwise    -> Unknown Gate
+~~~
+
+The internalized registry stores provenance only. It does not return the
+teacher answer directly. Runtime answers are generated from the trained model
+weights and must still pass confidence, agreement and semantic consistency
+checks.
+
+When accepted, diagnostics report:
+
+~~~text
+gate=INTERNALIZED
+route=internalized model generation
+~~~
+
+If the model output fails the normal gate, the response remains UNKNOWN rather
+than being force-accepted.
+
+### Inspection
+
+~~~text
+/internalized
+~~~
+
+lists concepts whose trusted teaching pairs are proven to have been consumed
+by /train.
+
+### Verification
+
+~~~powershell
+python .\run_internalized_registry_v10100.py
+python .\run_internalized_route_v10100.py
+~~~
+
+Expected final statuses:
+
+~~~text
+INTERNALIZED_REGISTRY_PASS
+INTERNALIZED_ROUTE_PASS
+~~~
