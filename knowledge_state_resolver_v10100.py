@@ -49,6 +49,7 @@ KNOWLEDGE_STATES = (
     "CANONICAL",
     "UNIFIED",
     "INTERNALIZED",
+    "INTERNALIZED_STALE",
     "RAW_CORPUS_ONLY",
     "UNKNOWN",
     "NON_CONCEPT",
@@ -172,6 +173,7 @@ def resolve_knowledge_state(
     learning_state: Path,
     raw_corpus_path: Path,
     canonical_definitions: Mapping[str, str],
+    checkpoint_fingerprints: set[str] | None = None,
     raw_min_occurrences: int = 2,
 ) -> KnowledgeState:
     """Resolve one explicit concept query to one knowledge state."""
@@ -288,27 +290,43 @@ def resolve_knowledge_state(
             if internalized.fingerprints
             else ""
         )
+        checkpoint_bound = (
+            checkpoint_fingerprints is None
+            or any(
+                fingerprint in checkpoint_fingerprints
+                for fingerprint in internalized.fingerprints
+            )
+        )
+        state_name = (
+            "INTERNALIZED"
+            if checkpoint_bound
+            else "INTERNALIZED_STALE"
+        )
+        evidence = (
+            "checkpoint-bound trained fingerprint evidence"
+            if checkpoint_bound
+            else "registry evidence exists but current checkpoint lacks fingerprint"
+        )
         return KnowledgeState(
-            state="INTERNALIZED",
+            state=state_name,
             focus=internalized.concept,
             reason=(
-                "trained fingerprint evidence present; "
-                f"trained_pairs={internalized.trained_pairs}"
+                f"{evidence}; trained_pairs={internalized.trained_pairs}"
             ),
             provenance=provenance_for_state(
-                "INTERNALIZED",
+                state_name,
                 source=internalized.latest_source,
                 origin=str(learning_log),
                 timestamp=internalized.latest_timestamp,
                 fingerprint=latest_fingerprint,
                 evidence=(
-                    "trained fingerprint evidence; "
-                    f"trained_pairs={internalized.trained_pairs}"
+                    f"{evidence}; trained_pairs={internalized.trained_pairs}"
                 ),
                 metadata={
                     "latest_question": internalized.latest_question,
                     "trained_pairs": str(internalized.trained_pairs),
                     "sources": ",".join(internalized.sources),
+                    "checkpoint_bound": str(checkpoint_bound),
                 },
             ),
         )
