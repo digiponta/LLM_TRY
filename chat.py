@@ -2442,6 +2442,7 @@ def main() -> None:
     print("  /typedsubjects list typed subject proposition index")
     print("  /internalized list concepts proven consumed by /train")
     print("  /kstate Q     inspect resolved knowledge state for query Q")
+    print("  /dispatch Q   inspect dispatcher action for query Q")
     print("  /exit         quit")
     print()
 
@@ -2631,6 +2632,38 @@ def main() -> None:
                 f"[unified semantic sync: {synced_count} subject(s), "
                 f"path={unified_semantic_path}]"
             )
+            print()
+            continue
+
+        if command.startswith("/dispatch "):
+            query = user_text[len("/dispatch "):].strip()
+            if not query:
+                print("[usage: /dispatch QUERY]")
+            else:
+                state = resolve_knowledge_state(
+                    query,
+                    typed_index_path=typed_subject_index_path,
+                    subject_index_path=subject_index_path,
+                    unified_path=unified_semantic_path,
+                    learning_log=learning_log,
+                    learning_state=learning_state,
+                    raw_corpus_path=resolve_runtime_path(
+                        DEFAULT_RAW_KNOWLEDGE_CORPUS
+                    ),
+                    canonical_definitions=CANONICAL_DEFINITIONS,
+                )
+                dispatch = dispatch_knowledge_state(state)
+                print(
+                    f"[dispatch action={dispatch.action}, "
+                    f"state={dispatch.state}, "
+                    f"focus={dispatch.focus!r}, "
+                    f"predicate_type={dispatch.predicate_type!r}, "
+                    f"terminal={dispatch.is_terminal}, "
+                    f"route={dispatch.route}, "
+                    f"reason={dispatch.reason}]"
+                )
+                if dispatch.answer:
+                    print(f"[dispatch answer: {dispatch.answer}]")
             print()
             continue
 
