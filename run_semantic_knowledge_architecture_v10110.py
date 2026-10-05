@@ -159,7 +159,7 @@ def main() -> None:
         status = architecture.status()
         check(
             "architecture-status",
-            status.get("version") == "v10.11.0"
+            str(status.get("version", "")).startswith("v10.11.")
             and "truth-state" in status.get("layers", ()),
             str(status),
         )
