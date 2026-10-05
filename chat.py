@@ -87,6 +87,10 @@ from semantic_knowledge_architecture_v10110 import (
 from semantic_knowledge_snapshot_v10111 import (
     snapshot_semantic_knowledge,
 )
+from knowledge_promotion_v10114 import (
+    pending_knowledge_requests,
+    promote_knowledge,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -2345,7 +2349,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.11.3 Bare Unknown Safety Gate")
+    print(" LLM_TRY Chat - v10.11.4 Knowledge Promotion Pipeline")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2471,6 +2475,8 @@ def main() -> None:
     print("  /truthset X STATE [=> CORRECTION]")
     print("  /semstatus    show Semantic Knowledge Architecture status")
     print("  /semantic X   inspect all semantic knowledge layers for X")
+    print("  /promotions   list pending UNKNOWN_KNOWLEDGE requests")
+    print("  /promote X => STATEMENT  promote pending concept to semantic knowledge")
     print("  /exit         quit")
     print()
 
@@ -2635,6 +2641,78 @@ def main() -> None:
                 f"typed_index={sync.typed_index_count}, "
                 f"unified_subjects={sync.unified_subject_count}]"
             )
+            print()
+            continue
+
+        if command == "/promotions":
+            pending = pending_knowledge_requests(
+                Path(args.knowledge_queue)
+            )
+            if not pending:
+                print("[knowledge promotions: no pending UNKNOWN_KNOWLEDGE requests]")
+            else:
+                print(
+                    f"[knowledge promotions: {len(pending)} pending request(s)]"
+                )
+                for index, row in enumerate(pending, 1):
+                    print(
+                        f"  {index:02d}. user={row.get('user', '')!r}, "
+                        f"reason={row.get('reason', '')!r}, "
+                        f"timestamp={row.get('timestamp', '')!r}"
+                    )
+            print()
+            continue
+
+        if command.startswith("/promote "):
+            payload = user_text[len("/promote "):].strip()
+            if "=>" not in payload:
+                print("[usage: /promote CONCEPT => STATEMENT]")
+                print()
+                continue
+
+            concept, statement = [
+                part.strip()
+                for part in payload.split("=>", 1)
+            ]
+            if not concept or not statement:
+                print("[usage: /promote CONCEPT => STATEMENT]")
+                print()
+                continue
+
+            promotion = promote_knowledge(
+                semantic_knowledge,
+                Path(args.knowledge_queue),
+                concept,
+                statement,
+            )
+            if not promotion.promoted:
+                print(
+                    f"[knowledge promotion rejected: "
+                    f"concept={concept!r}, reason={promotion.reason}]"
+                )
+            else:
+                post = promotion.post_result
+                truth_state = (
+                    post.truth_state
+                    if post is not None
+                    else ""
+                )
+                print(
+                    f"[knowledge promoted: concept={concept!r}, "
+                    f"atomic={len(promotion.propositions)}, "
+                    f"queue_resolved={promotion.queue_resolved}, "
+                    f"post_state={post.state if post else '-'}, "
+                    f"post_action={post.action if post else '-'}, "
+                    f"truth_state={truth_state or '-'}]"
+                )
+                for item in promotion.propositions:
+                    print(
+                        f"  + {item.subject} => {item.value}"
+                    )
+                print(
+                    "[promotion pipeline: UNKNOWN -> validated proposition "
+                    "-> subject/typed/unified sync -> bare routing enabled]"
+                )
             print()
             continue
 
