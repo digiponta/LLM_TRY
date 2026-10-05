@@ -56,6 +56,7 @@ from typed_subject_proposition_v10100 import (
     load_typed_index,
     sync_typed_index,
     typed_index_dict,
+    typed_query_lookup,
     typed_subject_mapping,
     typed_subject_rows,
 )
@@ -2903,6 +2904,25 @@ def main() -> None:
             print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
             print()
             last_ai_reply = None
+            continue
+
+        typed_query_hit = typed_query_lookup(
+            typed_subject_index_path,
+            user_text,
+        )
+        if typed_query_hit is not None:
+            typed_subject, typed_predicate_type, typed_answer = typed_query_hit
+            print(f"AI> {typed_answer}")
+            print(
+                "[gate=KNOWN, source=typed-subject-proposition, "
+                f"concept={typed_subject}, "
+                f"predicate_type={typed_predicate_type}, "
+                "route=typed-query-filter]"
+            )
+            print("[0 generated probe tokens, retrieval]")
+            print()
+            history.append((user_text, typed_answer))
+            last_ai_reply = typed_answer
             continue
 
         canonical_query = canonicalize_bare_known_query(user_text)
