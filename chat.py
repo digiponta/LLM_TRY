@@ -2338,7 +2338,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.10.3 Truth State")
+    print(" LLM_TRY Chat - v10.10.4 Truth-State Runtime Completion")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -3284,7 +3284,14 @@ def main() -> None:
                     f"{dispatch.reason}"
                 ),
             )
-            print(f"AI> {UNKNOWN_REPLY}")
+            block_reply = (
+                truth_result.user_message
+                if truth_result is not None
+                and truth_result.runtime_status == "BLOCK"
+                and truth_result.user_message
+                else UNKNOWN_REPLY
+            )
+            print(f"AI> {block_reply}")
             print(
                 f"[knowledge-state={dispatch.state}, "
                 f"concept={dispatch.focus}, generation=blocked]"
