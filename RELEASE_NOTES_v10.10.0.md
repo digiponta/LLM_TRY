@@ -102,3 +102,64 @@ TYPED_SEMANTIC_END_TO_END_PASS
 
 This release establishes the first typed semantic layer for the next stage of
 relation-aware composition, decomposition, and semantic routing.
+
+
+## Typed Predicate Query Routing
+
+v10.10.0 now uses predicate types not only as metadata but also as a runtime
+retrieval key.
+
+The new query path is:
+
+~~~text
+Question
+  ↓
+Predicate Type Detection
+  ↓
+Typed Proposition Filtering
+  ↓
+Answer Composition
+~~~
+
+Examples:
+
+~~~text
+GPUの性質は
+    -> property
+    -> GPUは、高速であり、低消費電力である。
+
+GPUは何が得意
+    -> capability
+    -> GPUは、並列計算が得意である。
+
+GPUとCUDAの関係は
+    -> relation
+    -> GPUは、CUDAを利用可能である。
+~~~
+
+Typed routing is conservative and requires an explicit cue. Generic questions
+continue to use the existing full subject composition path, preventing the new
+feature from narrowing answers unexpectedly.
+
+### Query cues
+
+~~~text
+property   : 性質 / 特徴
+capability : 得意 / できる / 能力 / 機能
+relation   : 関係 / 利用 / 依存 / 接続
+definition : とは / 定義
+~~~
+
+### Verification
+
+~~~powershell
+python .\run_typed_query_routing_v10100.py
+python .\run_typed_query_end_to_end_v10100.py
+~~~
+
+Expected final statuses:
+
+~~~text
+TYPED_QUERY_ROUTING_PASS
+TYPED_QUERY_END_TO_END_PASS
+~~~
