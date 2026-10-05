@@ -52,6 +52,13 @@ from subject_keyed_proposition_v1090 import (
     subject_mapping,
     sync_subject_index,
 )
+from typed_subject_proposition_v10100 import (
+    load_typed_index,
+    sync_typed_index,
+    typed_index_dict,
+    typed_subject_mapping,
+    typed_subject_rows,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -69,6 +76,7 @@ DEFAULT_RAW_KNOWLEDGE_CORPUS = "data/data-nagato.txt"
 DEFAULT_SEMANTIC_KNOWLEDGE = "data/unified_semantic_memory_v1090.jsonl"
 DEFAULT_PROPOSITION_STORE = "data/semantic_propositions_v1090.jsonl"
 DEFAULT_SUBJECT_INDEX = "data/subject_keyed_propositions_v1090.jsonl"
+DEFAULT_TYPED_SUBJECT_INDEX = "data/typed_subject_propositions_v10100.jsonl"
 
 USER_PREFIX = "人: "
 AI_PREFIX = "AI: "
@@ -142,6 +150,11 @@ def parse_args() -> argparse.Namespace:
         "--subject-index",
         default=DEFAULT_SUBJECT_INDEX,
         help="Derived subject-keyed semantic proposition index.",
+    )
+    parser.add_argument(
+        "--typed-subject-index",
+        default=DEFAULT_TYPED_SUBJECT_INDEX,
+        help="Derived Subject => Predicate Type => Statement index.",
     )
     parser.add_argument(
         "--learn",
@@ -2328,6 +2341,7 @@ def print_info(
         print("Gate review q   :", args.gate_review_queue)
         print("Proposition db  :", args.propositions)
         print("Subject index   :", args.subject_index)
+        print("Typed index     :", args.typed_subject_index)
         print(
             "Concept calib   :",
             CALIBRATION_INFO.get("version", "raw fallback")
@@ -2412,6 +2426,8 @@ def main() -> None:
     print("  /propsync     sync all atomic propositions to unified semantic memory")
     print("  /subject X    show X => X+predicate mappings")
     print("  /subjects     list subject-keyed proposition index")
+    print("  /typedsubject X show X => predicate type => statement")
+    print("  /typedsubjects list typed subject proposition index")
     print("  /exit         quit")
     print()
 
@@ -2421,6 +2437,9 @@ def main() -> None:
     proposition_path = resolve_runtime_path(args.propositions)
     unified_semantic_path = resolve_runtime_path(DEFAULT_SEMANTIC_KNOWLEDGE)
     subject_index_path = resolve_runtime_path(args.subject_index)
+    typed_subject_index_path = resolve_runtime_path(
+        args.typed_subject_index
+    )
     baseline_count = initialize_learning_state_if_missing(
         learning_state,
         learning_log,
@@ -2547,8 +2566,15 @@ def main() -> None:
                     proposition_path,
                     subject_index_path,
                 )
+                typed_index_count = sync_typed_index(
+                    proposition_path,
+                    typed_subject_index_path,
+                )
                 print(
                     f"[subject index rebuilt: {subject_index_count} statement(s)]"
+                )
+                print(
+                    f"[typed index rebuilt: {typed_index_count} statement(s)]"
                 )
                 synced = sync_subject_from_propositions(
                     proposition_path,
@@ -2570,6 +2596,10 @@ def main() -> None:
                 proposition_path,
                 subject_index_path,
             )
+            typed_index_count = sync_typed_index(
+                proposition_path,
+                typed_subject_index_path,
+            )
             synced_count = sync_all_propositions(
                 proposition_path,
                 unified_semantic_path,
@@ -2579,9 +2609,46 @@ def main() -> None:
                 f"path={subject_index_path}]"
             )
             print(
+                f"[typed index sync: {typed_index_count} statement(s), "
+                f"path={typed_subject_index_path}]"
+            )
+            print(
                 f"[unified semantic sync: {synced_count} subject(s), "
                 f"path={unified_semantic_path}]"
             )
+            print()
+            continue
+
+        if command == "/typedsubjects":
+            grouped = typed_index_dict(typed_subject_index_path)
+            if not grouped:
+                print("[typed subject index: empty]")
+            else:
+                print(f"[typed subject index: {len(grouped)} subject(s)]")
+                for subject, by_type in grouped.items():
+                    print(f"  {subject}:")
+                    for predicate_type, statements in by_type.items():
+                        for statement in statements:
+                            print(
+                                f"    {subject} => {predicate_type} => "
+                                f"{statement}"
+                            )
+            print()
+            continue
+
+        if command.startswith("/typedsubject "):
+            subject = user_text[len("/typedsubject "):].strip()
+            mappings = typed_subject_mapping(
+                typed_subject_index_path,
+                subject,
+            )
+            if not mappings:
+                print(
+                    f"[no typed subject propositions for {subject!r}]"
+                )
+            else:
+                for mapping in mappings:
+                    print(mapping)
             print()
             continue
 
@@ -2854,10 +2921,25 @@ def main() -> None:
                 subject_focus,
             )
             if subject_answer:
+                typed_rows = typed_subject_rows(
+                    typed_subject_index_path,
+                    subject_focus,
+                )
+                predicate_types = []
+                for row in typed_rows:
+                    if row.predicate_type not in predicate_types:
+                        predicate_types.append(row.predicate_type)
+                type_text = (
+                    ",".join(predicate_types)
+                    if predicate_types
+                    else "untyped"
+                )
                 print(f"AI> {subject_answer}")
                 print(
-                    "[gate=KNOWN, source=subject-keyed-proposition, "
-                    f"concept={subject_focus}, route=subject-index-compose]"
+                    "[gate=KNOWN, source=typed-subject-proposition, "
+                    f"concept={subject_focus}, "
+                    f"predicate_types={type_text}, "
+                    "route=subject-index-compose]"
                 )
                 print("[0 generated probe tokens, retrieval]")
                 print()
