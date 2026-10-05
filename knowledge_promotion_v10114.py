@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_TRY v10.11.4 Knowledge Promotion Pipeline
+LLM_TRY v10.11.5 Knowledge Promotion Pipeline
 
 Promote a pending UNKNOWN_KNOWLEDGE request into validated Semantic Knowledge.
 
@@ -20,8 +20,6 @@ Newly promoted knowledge remains UNVERIFIED unless truth is explicitly set.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
-import time
 from pathlib import Path
 
 from semantic_proposition_v1090 import (
@@ -32,6 +30,11 @@ from semantic_proposition_v1090 import (
 from semantic_knowledge_architecture_v10110 import (
     SemanticKnowledgeArchitecture,
     SemanticKnowledgeResult,
+)
+from knowledge_queue_lifecycle_v10115 import (
+    mark_concept_promoted,
+    pending_request_for_concept,
+    pending_requests,
 )
 
 
@@ -46,103 +49,11 @@ class PromotionResult:
     post_result: SemanticKnowledgeResult | None = None
 
 
-def normalize_queue_text(text: str) -> str:
-    return " ".join(str(text).strip().split()).lower()
-
-
-def _matches_concept_request(user_text: str, concept: str) -> bool:
-    user = normalize_queue_text(user_text)
-    concept_norm = normalize_queue_text(concept)
-    return user in {
-        concept_norm,
-        normalize_queue_text(f"{concept}とは"),
-        normalize_queue_text(f"{concept}について教えて"),
-    }
-
-
 def pending_knowledge_requests(
     queue_path: Path,
 ) -> list[dict]:
-    if not queue_path.exists():
-        return []
-
-    rows: list[dict] = []
-    for raw in queue_path.read_text(encoding="utf-8").splitlines():
-        if not raw.strip():
-            continue
-        try:
-            row = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        if str(row.get("resolution", "")) != "UNKNOWN_KNOWLEDGE":
-            continue
-        if str(row.get("status", "pending")) != "pending":
-            continue
-        rows.append(row)
-    return rows
-
-
-def pending_request_for_concept(
-    queue_path: Path,
-    concept: str,
-) -> dict | None:
-    for row in pending_knowledge_requests(queue_path):
-        if _matches_concept_request(
-            str(row.get("user", "")),
-            concept,
-        ):
-            return row
-    return None
-
-
-def mark_promoted_requests(
-    queue_path: Path,
-    concept: str,
-    statement: str,
-    post_state: str,
-) -> int:
-    if not queue_path.exists():
-        return 0
-
-    changed = 0
-    output: list[dict] = []
-    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-
-    for raw in queue_path.read_text(encoding="utf-8").splitlines():
-        if not raw.strip():
-            continue
-        try:
-            row = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-
-        if (
-            str(row.get("resolution", "")) == "UNKNOWN_KNOWLEDGE"
-            and str(row.get("status", "pending")) == "pending"
-            and _matches_concept_request(
-                str(row.get("user", "")),
-                concept,
-            )
-        ):
-            row["status"] = "promoted"
-            row["promoted_at"] = now
-            row["promoted_concept"] = concept
-            row["promoted_statement"] = statement
-            row["post_knowledge_state"] = post_state
-            changed += 1
-
-        output.append(row)
-
-    if changed:
-        queue_path.write_text(
-            "".join(
-                json.dumps(row, ensure_ascii=False) + "\n"
-                for row in output
-            ),
-            encoding="utf-8",
-        )
-
-    return changed
+    """Backward-compatible alias for the consolidated lifecycle manager."""
+    return pending_requests(queue_path)
 
 
 def validate_promotion_statement(
@@ -230,11 +141,12 @@ def promote_knowledge(
             post_result=post,
         )
 
-    resolved = mark_promoted_requests(
+    resolved = mark_concept_promoted(
         queue_path,
         concept,
-        statement,
-        post.state,
+        statement=statement,
+        post_state=post.state,
+        source="knowledge-promotion-v10.11.5",
     )
 
     return PromotionResult(
