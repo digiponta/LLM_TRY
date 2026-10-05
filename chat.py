@@ -2338,7 +2338,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.10.2 Provenance / Source Tracking")
+    print(" LLM_TRY Chat - v10.10.3 Truth State")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
