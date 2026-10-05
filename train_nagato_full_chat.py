@@ -69,7 +69,7 @@ def main() -> None:
     python = sys.executable
 
     print("=" * 88)
-    print(" LLM_TRY v10.8 Full Nagato -> Chat SFT Pipeline")
+    print(" LLM_TRY v10.11.5 Full Nagato -> Canonical Chat SFT Pipeline")
     print("=" * 88)
     print("Stage 1 base   :", args.base_model)
     print("Raw corpus     :", args.data)
@@ -79,7 +79,7 @@ def main() -> None:
     print("Training order:")
     print("  generic chat-clean")
     print("       -> full raw Nagato corpus")
-    print("       -> canonical Nagato conversational SFT")
+    print("       -> conflict-resolved canonical Nagato conversational SFT")
 
     run([
         python,
@@ -95,16 +95,16 @@ def main() -> None:
         "--stride", "512",
     ])
 
+    # Canonical-only SFT.
+    # nagato_canonical_v91.jsonl already resolves conflicting supervision from
+    # anchor/expansion/completion/paraphrase/consistency sources. Re-injecting
+    # those source files here would reintroduce the conflicts that canonical
+    # construction intentionally removed.
     run([
         python,
         "train_nagato_chat.py",
         "--data", "data/nagato_canonical_v91.jsonl",
         "--val-data", "data/nagato_chat_val.jsonl",
-        "--anchor-data", "data/nagato_identity_anchor.jsonl",
-        "--expansion-data", "data/nagato_response_expansion.jsonl",
-        "--completion-data", "data/nagato_response_completion.jsonl",
-        "--paraphrase-data", "data/nagato_paraphrase_generalization.jsonl",
-        "--consistency-data", "data/nagato_semantic_consistency.jsonl",
         "--tokenizer", args.tokenizer,
         "--base-model", args.raw_output,
         "--output", args.output,
@@ -113,11 +113,11 @@ def main() -> None:
         "--lm-head-learning-rate", str(args.sft_lm_head_learning_rate),
         "--batch-size", str(args.sft_batch_size),
         "--trainable-blocks", "2",
-        "--anchor-weight", "12",
-        "--expansion-weight", "3",
-        "--completion-weight", "5",
-        "--paraphrase-weight", "3",
-        "--consistency-weight", "3",
+        "--canonical-identity-weight", "12",
+        "--canonical-persona-weight", "6",
+        "--canonical-knowledge-weight", "5",
+        "--canonical-paraphrase-weight", "3",
+        "--repeat", "1",
     ])
 
     # Final identity-generalization stabilization.  These short prompts are
