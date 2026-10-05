@@ -69,6 +69,34 @@ class KnowledgeState:
 
 def extract_query_focus(question: str) -> str:
     q = str(question).strip()
+
+    # Conversational greetings must never be split as "<concept> + は".
+    # Example: "こんにちは" previously matched the generic trailing-"は"
+    # pattern as focus="こんにち".
+    non_concept_patterns = (
+        "こんにちは",
+        "こんばんは",
+        "おはよう",
+        "おはようございます",
+        "はじめまして",
+        "お疲れさま",
+        "お疲れ様",
+        "ありがとう",
+        "ありがとうございます",
+        "さようなら",
+        "またね",
+        "やあ",
+        "hello",
+        "hi",
+    )
+    q_lower = q.lower()
+    if any(
+        q_lower == phrase.lower()
+        or q_lower.startswith(phrase.lower())
+        for phrase in non_concept_patterns
+    ):
+        return ""
+
     patterns = (
         r"^(.+?)(?:とは)$",
         r"^(.+?)(?:って何)$",
