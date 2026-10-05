@@ -2737,18 +2737,8 @@ def main() -> None:
             if not query:
                 print("[usage: /provenance QUERY]")
             else:
-                state = resolve_knowledge_state(
-                    query,
-                    typed_index_path=typed_subject_index_path,
-                    subject_index_path=subject_index_path,
-                    unified_path=unified_semantic_path,
-                    learning_log=learning_log,
-                    learning_state=learning_state,
-                    raw_corpus_path=resolve_runtime_path(
-                        DEFAULT_RAW_KNOWLEDGE_CORPUS
-                    ),
-                    canonical_definitions=CANONICAL_DEFINITIONS,
-                )
+                result = semantic_knowledge.resolve(query)
+                state = result.knowledge_state
                 provenance = state.provenance
                 if provenance is None:
                     print("[provenance: none]")
@@ -2780,31 +2770,10 @@ def main() -> None:
             if not query:
                 print("[usage: /dispatch QUERY]")
             else:
-                state = resolve_knowledge_state(
-                    query,
-                    typed_index_path=typed_subject_index_path,
-                    subject_index_path=subject_index_path,
-                    unified_path=unified_semantic_path,
-                    learning_log=learning_log,
-                    learning_state=learning_state,
-                    raw_corpus_path=resolve_runtime_path(
-                        DEFAULT_RAW_KNOWLEDGE_CORPUS
-                    ),
-                    canonical_definitions=CANONICAL_DEFINITIONS,
-                )
-                dispatch = dispatch_knowledge_state(state)
-                truth_record = None
-                truth_result = None
-                if dispatch.focus and dispatch.state != "UNKNOWN":
-                    truth_record = effective_truth_record(
-                        truth_store_path,
-                        dispatch.focus,
-                    )
-                    truth_result = apply_truth_policy(
-                        dispatch,
-                        truth_record,
-                    )
-                    dispatch = truth_result.dispatch
+                result = semantic_knowledge.resolve(query)
+                dispatch = result.dispatch
+                truth_record = result.truth
+                truth_result = result.truth_result
                 provenance_text = (
                     dispatch.provenance.compact()
                     if dispatch.provenance is not None
@@ -2848,18 +2817,8 @@ def main() -> None:
             if not query:
                 print("[usage: /kstate QUERY]")
             else:
-                state = resolve_knowledge_state(
-                    query,
-                    typed_index_path=typed_subject_index_path,
-                    subject_index_path=subject_index_path,
-                    unified_path=unified_semantic_path,
-                    learning_log=learning_log,
-                    learning_state=learning_state,
-                    raw_corpus_path=resolve_runtime_path(
-                        DEFAULT_RAW_KNOWLEDGE_CORPUS
-                    ),
-                    canonical_definitions=CANONICAL_DEFINITIONS,
-                )
+                result = semantic_knowledge.resolve(query)
+                state = result.knowledge_state
                 print(
                     f"[knowledge-state={state.state}, "
                     f"focus={state.focus!r}, "
