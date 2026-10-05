@@ -156,3 +156,88 @@ Expected result:
 
 The resulting unified-memory record remains compatible with the existing
 `semantic_knowledge_lookup()` path.
+
+
+## Subject-Keyed Semantic Proposition Index
+
+v10.9.0 now adds a derived subject-keyed semantic index on top of the atomic
+proposition store.
+
+Conceptually:
+
+~~~text
+GPUは高速である。
+    ↓
+GPU => GPUは高速である。
+~~~
+
+Multiple predicates are indexed independently:
+
+~~~text
+GPU => GPUは高速である。
+GPU => GPUは並列計算が得意である。
+~~~
+
+and can be recomposed into:
+
+~~~text
+GPUは、高速であり、並列計算が得意である。
+~~~
+
+### Source of truth
+
+The atomic proposition store remains authoritative.
+
+~~~text
+Atomic Proposition Store
+        ↓ rebuild
+Subject-Keyed Proposition Index
+        ↓ compose
+Unified Semantic Memory
+        ↓
+Runtime Retrieval
+~~~
+
+The derived index is stored at:
+
+~~~text
+data/subject_keyed_propositions_v1090.jsonl
+~~~
+
+Each row uses:
+
+~~~json
+{
+  "subject": "GPU",
+  "statement": "GPUは高速である。",
+  "value": "高速"
+}
+~~~
+
+### Chat commands
+
+~~~text
+/subject GPU
+/subjects
+~~~
+
+`/propteach` automatically rebuilds the subject index before updating unified
+semantic memory. `/propsync` rebuilds both the subject index and unified
+semantic memory.
+
+Normal concept queries consult the subject-keyed index before the lower-level
+atomic proposition lookup.
+
+### Verification
+
+~~~powershell
+python .\run_subject_keyed_proposition_regression_v1090.py
+python .\run_subject_keyed_end_to_end_v1090.py
+~~~
+
+Expected final statuses:
+
+~~~text
+SUBJECT_KEYED_PROPOSITION_PASS
+SUBJECT_KEYED_END_TO_END_PASS
+~~~
