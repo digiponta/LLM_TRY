@@ -35,6 +35,11 @@ import torch.nn.functional as F
 
 from model import LanguageModel
 from tokenizer_bpe import Tokenizer
+from semantic_proposition_v1090 import (
+    add_statement as add_semantic_proposition_statement,
+    compose_subject as compose_semantic_proposition_subject,
+    load_propositions as load_semantic_propositions,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -50,6 +55,7 @@ DEFAULT_ONLINE_MODEL = "model/model-gpu-v1.6.2-online.pt"
 DEFAULT_ONLINE_TRAINER = "online_train.py"
 DEFAULT_RAW_KNOWLEDGE_CORPUS = "data/data-nagato.txt"
 DEFAULT_SEMANTIC_KNOWLEDGE = "data/unified_semantic_memory_v1090.jsonl"
+DEFAULT_PROPOSITION_STORE = "data/semantic_propositions_v1090.jsonl"
 
 USER_PREFIX = "人: "
 AI_PREFIX = "AI: "
@@ -114,6 +120,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--teaching-queue", default=DEFAULT_TEACHING_QUEUE)
     parser.add_argument("--knowledge-queue", default=DEFAULT_KNOWLEDGE_QUEUE)
     parser.add_argument("--gate-review-queue", default=DEFAULT_GATE_REVIEW_QUEUE)
+    parser.add_argument(
+        "--propositions",
+        default=DEFAULT_PROPOSITION_STORE,
+        help="Persistent atomic semantic proposition store.",
+    )
     parser.add_argument(
         "--learn",
         action=argparse.BooleanOptionalAction,
@@ -1760,6 +1771,27 @@ def raw_corpus_knows_focus(
     return text.count(focus) >= max(1, min_occurrences)
 
 
+def semantic_proposition_lookup(
+    question: str,
+    proposition_path: str | Path = DEFAULT_PROPOSITION_STORE,
+) -> tuple[str, str] | None:
+    """Return a composed answer from atomic propositions for concept queries."""
+    focus = extract_concept_query_focus(question)
+    if not focus:
+        focus = extract_bare_concept_focus(question)
+    if not focus:
+        return None
+
+    path = resolve_runtime_path(proposition_path)
+    if not path.exists():
+        return None
+
+    answer = compose_semantic_proposition_subject(path, focus)
+    if not answer:
+        return None
+    return focus, answer
+
+
 def semantic_knowledge_lookup(
     question: str,
     knowledge_path: str | Path = DEFAULT_SEMANTIC_KNOWLEDGE,
@@ -2203,6 +2235,7 @@ def print_info(
         print("Teaching queue  :", args.teaching_queue)
         print("Knowledge queue :", args.knowledge_queue)
         print("Gate review q   :", args.gate_review_queue)
+        print("Proposition db  :", args.propositions)
         print(
             "Concept calib   :",
             CALIBRATION_INFO.get("version", "raw fallback")
@@ -2281,12 +2314,16 @@ def main() -> None:
     print("  /train        run incremental training and reload checkpoint")
     print("  /maintain     recover the previous question from trusted teaching data")
     print("  /maintain all recover all pending trusted teaching candidates")
+    print("  /propteach S  decompose and persist semantic proposition statement")
+    print("  /prop X       compose stored propositions for subject X")
+    print("  /props        list atomic semantic propositions")
     print("  /exit         quit")
     print()
 
     history: List[Tuple[str, str]] = []
     learning_log = Path(args.learning_log)
     learning_state = Path(args.learning_state)
+    proposition_path = resolve_runtime_path(args.propositions)
     baseline_count = initialize_learning_state_if_missing(
         learning_state,
         learning_log,
@@ -2359,6 +2396,62 @@ def main() -> None:
                 f"pairs={learning_log_count(learning_log)}, "
                 f"log={learning_log}]"
             )
+            print()
+            continue
+
+        if command == "/props":
+            propositions = load_semantic_propositions(proposition_path)
+            if not propositions:
+                print("[semantic propositions: empty]")
+            else:
+                print(
+                    f"[semantic propositions: {len(propositions)} atomic item(s)]"
+                )
+                for index, item in enumerate(propositions, 1):
+                    print(
+                        f"  {index:02d}. "
+                        f"subject={item.subject!r} value={item.value!r}"
+                    )
+            print()
+            continue
+
+        if command.startswith("/propteach "):
+            statement = user_text[len("/propteach "):].strip()
+            added = add_semantic_proposition_statement(
+                proposition_path,
+                statement,
+            )
+            if not added:
+                print(
+                    "[proposition teaching rejected: expected "
+                    "XはYである or Xは、Yであり、Zである]"
+                )
+            else:
+                print(
+                    f"[proposition decomposed: {len(added)} atomic item(s)]"
+                )
+                for item in added:
+                    print(
+                        f"  + subject={item.subject!r} value={item.value!r}"
+                    )
+                rendered = compose_semantic_proposition_subject(
+                    proposition_path,
+                    added[0].subject,
+                )
+                print(f"[proposition composed: {rendered}]")
+            print()
+            continue
+
+        if command.startswith("/prop "):
+            subject = user_text[len("/prop "):].strip()
+            answer = compose_semantic_proposition_subject(
+                proposition_path,
+                subject,
+            )
+            if answer:
+                print(f"AI> {answer}")
+            else:
+                print(f"[no semantic propositions for {subject!r}]")
             print()
             continue
 
@@ -2569,6 +2662,29 @@ def main() -> None:
             print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
             print()
             last_ai_reply = None
+            continue
+
+        proposition_hit = semantic_proposition_lookup(
+            user_text,
+            proposition_path,
+        )
+        if proposition_hit is not None:
+            proposition_concept, proposition_answer = proposition_hit
+            print(f"AI> {proposition_answer}")
+            print(
+                "[gate=KNOWN, source=semantic-proposition, "
+                f"concept={proposition_concept}, route=atomic-compose]"
+            )
+            print()
+            last_ai_reply = proposition_answer
+            if learning_enabled:
+                append_learning_pair(
+                    learning_log,
+                    user_text,
+                    proposition_answer,
+                    source="chat-auto",
+                )
+            history.append((user_text, proposition_answer))
             continue
 
         semantic_hit = semantic_knowledge_lookup(user_text)
