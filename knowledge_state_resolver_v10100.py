@@ -26,6 +26,11 @@ import re
 from pathlib import Path
 from typing import Mapping
 
+from knowledge_provenance_v10102 import (
+    KnowledgeProvenance,
+    provenance_for_state,
+)
+
 from internalized_knowledge_v10100 import (
     internalized_concept_for_focus,
     load_internalized_concepts,
@@ -57,6 +62,7 @@ class KnowledgeState:
     answer: str = ""
     predicate_type: str = ""
     reason: str = ""
+    provenance: KnowledgeProvenance | None = None
 
     @property
     def is_retrieval(self) -> bool:
@@ -112,12 +118,12 @@ def extract_query_focus(question: str) -> str:
     return ""
 
 
-def unified_lookup(
+def unified_lookup_row(
     knowledge_path: Path,
     focus: str,
-) -> str:
+) -> dict[str, object] | None:
     if not focus or not knowledge_path.exists():
-        return ""
+        return None
 
     for raw in knowledge_path.read_text(encoding="utf-8").splitlines():
         if not raw.strip():
@@ -129,8 +135,18 @@ def unified_lookup(
         concept = str(row.get("concept", "")).strip()
         answer = str(row.get("assistant", "")).strip()
         if concept == focus and answer:
-            return answer
-    return ""
+            return row
+    return None
+
+
+def unified_lookup(
+    knowledge_path: Path,
+    focus: str,
+) -> str:
+    row = unified_lookup_row(knowledge_path, focus)
+    if row is None:
+        return ""
+    return str(row.get("assistant", "")).strip()
 
 
 def raw_corpus_occurrences(
@@ -171,6 +187,12 @@ def resolve_knowledge_state(
             answer=answer,
             predicate_type=predicate_type,
             reason="typed predicate query hit",
+            provenance=provenance_for_state(
+                "TYPED",
+                source="typed-subject-proposition",
+                origin=str(typed_index_path),
+                evidence=f"predicate_type={predicate_type}",
+            ),
         )
 
     focus = extract_query_focus(question)
@@ -178,6 +200,12 @@ def resolve_knowledge_state(
         return KnowledgeState(
             state="NON_CONCEPT",
             reason="no explicit concept query",
+            provenance=provenance_for_state(
+                "NON_CONCEPT",
+                source="runtime-conversation",
+                origin="chat input",
+                evidence="no explicit concept query",
+            ),
         )
 
     # Generic subject-keyed propositions are also typed semantic knowledge.
@@ -194,6 +222,15 @@ def resolve_knowledge_state(
             answer=subject_answer,
             predicate_type=",".join(predicate_types),
             reason="subject-keyed semantic compose hit",
+            provenance=provenance_for_state(
+                "TYPED",
+                source="subject-keyed-proposition",
+                origin=str(subject_index_path),
+                evidence=(
+                    "predicate_types="
+                    + ",".join(predicate_types)
+                ),
+            ),
         )
 
     canonical = canonical_definitions.get(focus.lower(), "")
@@ -203,15 +240,41 @@ def resolve_knowledge_state(
             focus=focus,
             answer=canonical,
             reason="canonical definition hit",
+            provenance=provenance_for_state(
+                "CANONICAL",
+                source="canonical-definition",
+                origin="chat.py:CANONICAL_DEFINITIONS",
+                evidence=f"canonical key={focus.lower()}",
+            ),
         )
 
-    unified = unified_lookup(unified_path, focus)
-    if unified:
+    unified_row = unified_lookup_row(unified_path, focus)
+    if unified_row is not None:
+        unified = str(unified_row.get("assistant", "")).strip()
+        metadata = {}
+        for key in (
+            "semantic_schema",
+            "atomic_count",
+            "predicate_types",
+        ):
+            if key in unified_row:
+                metadata[key] = str(unified_row.get(key))
         return KnowledgeState(
             state="UNIFIED",
             focus=focus,
             answer=unified,
             reason="unified semantic memory hit",
+            provenance=provenance_for_state(
+                "UNIFIED",
+                source=str(
+                    unified_row.get("source", "unified-semantic-memory")
+                ),
+                origin=str(unified_path),
+                timestamp=str(unified_row.get("updated_at", "")),
+                fingerprint=str(unified_row.get("fingerprint", "")),
+                evidence="concept row matched unified semantic memory",
+                metadata=metadata,
+            ),
         )
 
     concepts = load_internalized_concepts(
@@ -220,12 +283,33 @@ def resolve_knowledge_state(
     )
     internalized = internalized_concept_for_focus(concepts, focus)
     if internalized is not None:
+        latest_fingerprint = (
+            internalized.fingerprints[-1]
+            if internalized.fingerprints
+            else ""
+        )
         return KnowledgeState(
             state="INTERNALIZED",
             focus=internalized.concept,
             reason=(
                 "trained fingerprint evidence present; "
                 f"trained_pairs={internalized.trained_pairs}"
+            ),
+            provenance=provenance_for_state(
+                "INTERNALIZED",
+                source=internalized.latest_source,
+                origin=str(learning_log),
+                timestamp=internalized.latest_timestamp,
+                fingerprint=latest_fingerprint,
+                evidence=(
+                    "trained fingerprint evidence; "
+                    f"trained_pairs={internalized.trained_pairs}"
+                ),
+                metadata={
+                    "latest_question": internalized.latest_question,
+                    "trained_pairs": str(internalized.trained_pairs),
+                    "sources": ",".join(internalized.sources),
+                },
             ),
         )
 
@@ -235,10 +319,22 @@ def resolve_knowledge_state(
             state="RAW_CORPUS_ONLY",
             focus=focus,
             reason=f"raw corpus occurrences={occurrences}",
+            provenance=provenance_for_state(
+                "RAW_CORPUS_ONLY",
+                source="raw-corpus",
+                origin=str(raw_corpus_path),
+                evidence=f"occurrences={occurrences}",
+            ),
         )
 
     return KnowledgeState(
         state="UNKNOWN",
         focus=focus,
         reason="no validated knowledge source",
+        provenance=provenance_for_state(
+            "UNKNOWN",
+            source="none",
+            origin="",
+            evidence="no validated knowledge source",
+        ),
     )
