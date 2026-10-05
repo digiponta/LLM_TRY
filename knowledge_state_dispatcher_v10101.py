@@ -90,6 +90,16 @@ def dispatch_knowledge_state(
             provenance=state.provenance,
         )
 
+    if state.state == "INTERNALIZED_STALE":
+        return DispatchResult(
+            action="BLOCK",
+            state=state.state,
+            focus=state.focus,
+            route="internalized checkpoint stale",
+            reason=state.reason,
+            provenance=state.provenance,
+        )
+
     if state.state == "NON_CONCEPT":
         return DispatchResult(
             action="GENERATE",
