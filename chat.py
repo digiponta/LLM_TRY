@@ -2433,6 +2433,7 @@ def main() -> None:
     print("  /subjects     list subject-keyed proposition index")
     print("  /typedsubject X show X => predicate type => statement")
     print("  /typedsubjects list typed subject proposition index")
+    print("  /internalized list concepts proven consumed by /train")
     print("  /exit         quit")
     print()
 
@@ -2622,6 +2623,26 @@ def main() -> None:
                 f"[unified semantic sync: {synced_count} subject(s), "
                 f"path={unified_semantic_path}]"
             )
+            print()
+            continue
+
+        if command == "/internalized":
+            records = load_internalized_records(
+                learning_log,
+                learning_state,
+            )
+            if not records:
+                print("[internalized knowledge: empty]")
+            else:
+                print(
+                    f"[internalized knowledge: {len(records)} trained item(s)]"
+                )
+                for index, record in enumerate(records, 1):
+                    print(
+                        f"  {index:02d}. concept={record.concept!r} "
+                        f"question={record.question!r} "
+                        f"source={record.source}"
+                    )
             print()
             continue
 
@@ -3286,6 +3307,11 @@ def main() -> None:
             else:
                 status = "KNOWN" if accepted else "UNKNOWN"
             semantic_part = ""
+            internalized_part = (
+                f", internalized_concept={internalized_record.concept}"
+                if internalized_record is not None
+                else ""
+            )
             if args.semantic_consistency:
                 slot_text = "|".join(slots) if slots else "-"
                 internalized_part = (
