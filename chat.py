@@ -2298,7 +2298,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.9.0 Semantic Integration")
+    print(" LLM_TRY Chat - v10.10.0 Semantic Integration")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
