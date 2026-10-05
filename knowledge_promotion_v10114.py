@@ -44,9 +44,14 @@ class PromotionResult:
     statement: str
     promoted: bool
     propositions: tuple[Proposition, ...] = ()
-    queue_resolved: int = 0
+    queue_promoted: int = 0
     reason: str = ""
     post_result: SemanticKnowledgeResult | None = None
+
+    @property
+    def queue_resolved(self) -> int:
+        """Backward-compatible v10.11.4 alias."""
+        return self.queue_promoted
 
 
 def pending_knowledge_requests(
@@ -154,7 +159,7 @@ def promote_knowledge(
         statement=statement,
         promoted=True,
         propositions=tuple(added),
-        queue_resolved=resolved,
+        queue_promoted=resolved,
         reason="knowledge promoted to validated semantic layer",
         post_result=post,
     )
