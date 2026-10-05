@@ -3,6 +3,7 @@
 """LLM_TRY v10.9.0 Runtime Normalization / Bare Concept Regression."""
 
 from chat import (
+    canonical_definition_lookup,
     canonicalize_bare_known_query,
     normalize_runtime_input,
     pre_generation_unknown_concept,
@@ -50,6 +51,25 @@ def main():
         "persona-not-canonicalized",
         canonicalize_bare_known_query("長門") == "長門",
         canonicalize_bare_known_query("長門"),
+    )
+    check(
+        "cpu-canonical-definition",
+        canonical_definition_lookup("CPUとは")
+        == (
+            "CPU",
+            "CPUは、命令を解釈して演算や制御を実行する中央処理装置である。",
+        ),
+        str(canonical_definition_lookup("CPUとは")),
+    )
+    check(
+        "gpu-canonical-definition",
+        canonical_definition_lookup("GPU") is not None,
+        str(canonical_definition_lookup("GPU")),
+    )
+    check(
+        "cuda-canonical-definition",
+        canonical_definition_lookup("CUDA") is not None,
+        str(canonical_definition_lookup("CUDA")),
     )
     check(
         "unknown-bare-not-canonicalized",
