@@ -13,6 +13,7 @@ from semantic_knowledge_architecture_v10110 import (
     SemanticKnowledgeArchitecture,
     SemanticKnowledgeConfig,
 )
+from truth_state_v10103 import upsert_truth_record
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
@@ -110,6 +111,24 @@ def main() -> None:
             str(cpu),
         )
 
+        upsert_truth_record(
+            config.truth_store_path,
+            "CPU",
+            "FALSE",
+            source="test",
+        )
+        cpu_false = architecture.resolve("CPU")
+        check(
+            "cpu-bare-truth-block",
+            cpu_false.bare_concept_routed
+            and cpu_false.state == "CANONICAL"
+            and cpu_false.action == "BLOCK"
+            and cpu_false.truth_state == "FALSE"
+            and cpu_false.truth_result is not None
+            and cpu_false.truth_result.runtime_status == "BLOCK",
+            str(cpu_false),
+        )
+
         universe = architecture.resolve("宇宙")
         check(
             "universe-bare-routed",
@@ -160,6 +179,7 @@ def main() -> None:
     print()
     print("TYPED bare route        : PASS")
     print("CANONICAL bare route    : PASS")
+    print("Bare truth overlay      : PASS")
     print("UNIFIED bare route      : PASS")
     print("INTERNALIZED bare route : PASS")
     print("Persona preservation    : PASS")
