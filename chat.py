@@ -3195,6 +3195,7 @@ def main() -> None:
         DEFAULT_NAGATO_SEMANTIC_MEMORY
     )
     semantic_sleep_sync = bootstrap_nagato_semantic_memory(
+        resolve_runtime_path(DEFAULT_RAW_KNOWLEDGE_CORPUS),
         resolve_runtime_path(args.corpus_memory),
         nagato_semantic_memory_path,
         unified_semantic_path,
