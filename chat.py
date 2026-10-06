@@ -24,6 +24,7 @@ from pathlib import Path
 import json
 import hashlib
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -933,10 +934,22 @@ def resolve_teaching_queue(
 def run_online_training(
     args: argparse.Namespace,
     model_path: Path,
+    *,
+    output_path: Path | None = None,
+    state_path: Path | None = None,
 ) -> Path | None:
     trainer = Path(args.online_trainer)
     learning_log = Path(args.learning_log)
-    output = Path(args.online_output)
+    output = (
+        Path(output_path)
+        if output_path is not None
+        else Path(args.online_output)
+    )
+    training_state = (
+        Path(state_path)
+        if state_path is not None
+        else Path(args.learning_state)
+    )
 
     if not trainer.exists():
         print(f"[online trainer not found: {trainer}]")
@@ -952,7 +965,7 @@ def run_online_training(
         "--base-model", str(model_path),
         "--tokenizer", str(resolve_runtime_path(args.tokenizer)),
         "--output", str(output),
-        "--state", str(args.learning_state),
+        "--state", str(training_state),
     ]
     print("[starting incremental training]")
     print(" ".join(cmd))
@@ -967,6 +980,43 @@ def run_online_training(
         print(f"[training finished but checkpoint not found: {output}]")
         return None
     return output
+
+def batch_candidate_paths(
+    output_path: Path,
+    state_path: Path,
+) -> tuple[Path, Path]:
+    candidate_checkpoint = output_path.with_name(
+        output_path.stem + ".candidate" + output_path.suffix
+    )
+    candidate_state = state_path.with_name(
+        state_path.stem + ".candidate" + state_path.suffix
+    )
+    return candidate_checkpoint, candidate_state
+
+
+def discard_batch_candidate(
+    candidate_checkpoint: Path,
+    candidate_state: Path,
+) -> None:
+    for path in (candidate_checkpoint, candidate_state):
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError as exc:
+            print(f"[candidate cleanup warning: {path}: {exc}]")
+
+
+def promote_batch_candidate(
+    candidate_checkpoint: Path,
+    candidate_state: Path,
+    production_checkpoint: Path,
+    production_state: Path,
+) -> None:
+    production_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    production_state.parent.mkdir(parents=True, exist_ok=True)
+    candidate_checkpoint.replace(production_checkpoint)
+    candidate_state.replace(production_state)
+
 
 def _slot_overlap(a: list[str], b: list[str]) -> bool:
     aa = {x.lower() for x in a}
@@ -2666,7 +2716,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.12.1 Batch Repair Preservation Gate")
+    print(" LLM_TRY Chat - v10.12.2 Candidate Checkpoint / Rollback")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -3912,72 +3962,171 @@ def main() -> None:
                 f"concepts={'|'.join(plan.concepts)}]"
             )
 
-            new_model_path = run_online_training(
+            production_checkpoint = Path(args.online_output)
+            production_state = Path(args.learning_state)
+            (
+                candidate_checkpoint,
+                candidate_state,
+            ) = batch_candidate_paths(
+                production_checkpoint,
+                production_state,
+            )
+            discard_batch_candidate(
+                candidate_checkpoint,
+                candidate_state,
+            )
+
+            if not production_state.exists():
+                print(
+                    f"[batch candidate aborted: learning state not found: "
+                    f"{production_state}]"
+                )
+                print()
+                continue
+
+            candidate_state.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+            shutil.copy2(
+                production_state,
+                candidate_state,
+            )
+            print(
+                f"[batch candidate prepared: checkpoint={candidate_checkpoint}, "
+                f"state={candidate_state}]"
+            )
+            print(
+                f"[production checkpoint protected: {model_path}]"
+            )
+
+            new_candidate_path = run_online_training(
                 args,
                 model_path,
+                output_path=candidate_checkpoint,
+                state_path=candidate_state,
             )
-            if new_model_path is not None:
-                model, checkpoint = LanguageModel.load_checkpoint(
-                    str(new_model_path),
+            if new_candidate_path is None:
+                discard_batch_candidate(
+                    candidate_checkpoint,
+                    candidate_state,
+                )
+                print(
+                    "[batch candidate discarded: training did not produce "
+                    "a usable checkpoint; production unchanged]"
+                )
+                print()
+                continue
+
+            candidate_model, candidate_ckpt = (
+                LanguageModel.load_checkpoint(
+                    str(new_candidate_path),
                     device=device,
                 )
-                model_path = new_model_path
-                print(
-                    f"[reloaded batch-trained checkpoint: "
-                    f"{model_path}]"
-                )
-                semantic_config = replace(
-                    semantic_config,
-                    checkpoint_fingerprints=(
-                        checkpoint_trained_fingerprints(
-                            checkpoint
-                        )
-                    ),
-                )
-                semantic_knowledge = (
-                    SemanticKnowledgeArchitecture(
-                        semantic_config
-                    )
-                )
-                print(
-                    f"[checkpoint binding refreshed: "
-                    f"{len(semantic_config.checkpoint_fingerprints or ())} "
-                    "fingerprint(s)]"
-                )
-                preservation_ok, preservation_passed, preservation_failed = (
-                    run_batch_preservation_gate(
-                        model=model,
-                        tokenizer=tokenizer,
-                        protected_records=protected_records,
-                        args=args,
-                        batch_fingerprints=plan.fingerprints,
-                    )
+            )
+            print(
+                f"[loaded batch candidate checkpoint: "
+                f"{new_candidate_path}]"
+            )
+            print(
+                f"[candidate binding: "
+                f"{len(checkpoint_trained_fingerprints(candidate_ckpt))} "
+                "fingerprint(s)]"
+            )
+
+            (
+                preservation_ok,
+                preservation_passed,
+                preservation_failed,
+            ) = run_batch_preservation_gate(
+                model=candidate_model,
+                tokenizer=tokenizer,
+                protected_records=protected_records,
+                args=args,
+                batch_fingerprints=plan.fingerprints,
+            )
+
+            if not preservation_ok:
+                discard_batch_candidate(
+                    candidate_checkpoint,
+                    candidate_state,
                 )
                 print(
-                    f"[verification batch trained: "
-                    f"{plan.count} task(s); "
-                    f"preservation={'PASS' if preservation_ok else 'FAIL'}; "
-                    "re-query each concept to resolve verification]"
+                    "[batch rollback: preservation=FAIL; "
+                    "candidate checkpoint/state discarded]"
                 )
-                if not preservation_ok:
-                    print(
-                        "[batch preservation warning: one or more protected "
-                        "internalized concepts regressed; batch is not "
-                        "considered fully successful]"
-                    )
-                for concept in plan.concepts:
-                    print(f"  -> {concept}")
-                load_concept_calibration(
-                    calibration_path,
-                    device,
+                print(
+                    f"[production checkpoint retained: {model_path}]"
+                )
+                print(
+                    "[verification tasks remain retrain; "
+                    "adjust training/replay before retry]"
                 )
                 history.clear()
                 last_user_text = None
                 last_ai_reply = None
                 print(
-                    "[conversation history cleared after "
-                    "batch training]"
+                    "[conversation history cleared after batch rollback]"
                 )
+                print()
+                continue
+
+            promote_batch_candidate(
+                candidate_checkpoint,
+                candidate_state,
+                production_checkpoint,
+                production_state,
+            )
+            model, checkpoint = LanguageModel.load_checkpoint(
+                str(production_checkpoint),
+                device=device,
+            )
+            model_path = production_checkpoint
+            print(
+                f"[batch candidate promoted: "
+                f"{production_checkpoint}]"
+            )
+            print(
+                f"[batch state promoted: {production_state}]"
+            )
+
+            semantic_config = replace(
+                semantic_config,
+                checkpoint_fingerprints=(
+                    checkpoint_trained_fingerprints(
+                        checkpoint
+                    )
+                ),
+            )
+            semantic_knowledge = (
+                SemanticKnowledgeArchitecture(
+                    semantic_config
+                )
+            )
+            print(
+                f"[checkpoint binding refreshed: "
+                f"{len(semantic_config.checkpoint_fingerprints or ())} "
+                "fingerprint(s)]"
+            )
+            print(
+                f"[verification batch trained: "
+                f"{plan.count} task(s); "
+                "preservation=PASS; candidate=PROMOTED; "
+                "re-query each concept to resolve verification]"
+            )
+            for concept in plan.concepts:
+                print(f"  -> {concept}")
+            load_concept_calibration(
+                calibration_path,
+                device,
+            )
+            history.clear()
+            last_user_text = None
+            last_ai_reply = None
+            print(
+                "[conversation history cleared after "
+                "batch promotion]"
+            )
             print()
             continue
 
