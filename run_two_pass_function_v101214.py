@@ -21,7 +21,7 @@ def check(name, ok, detail=""):
 
 def main():
     print("=" * 116)
-    print(" LLM_TRY v10.12.14 Two-Pass Function Resolver Regression")
+    print(" LLM_TRY v10.12.14.1 Multi-Probe Two-Pass Function Resolver Regression")
     print("=" * 116)
 
     subject = "CPU"
@@ -45,12 +45,18 @@ def main():
         calls.append(query)
         if len(calls) == 1:
             return evidence
+        if len(calls) == 2:
+            return "CPUは計算のために命令を処理する。"
+        if len(calls) == 3:
+            return "CPUの役割は命令を実行すること。"
         return "CPUは命令を実行する機能を持つ。"
 
     result = resolve_two_pass_function(subject, fake_generate)
-    check("two-pass-call-count", len(calls) == 2, str(len(calls)))
-    check("pass1-no-gold-slots", "action:" not in calls[0])
-    check("pass2-uses-pass1-evidence", evidence in calls[1])
+    check("multi-probe-plus-compose-count", len(calls) == 4, str(len(calls)))
+    check("pass1-no-gold-slots", all("action:" not in q for q in calls[:3]))
+    check("three-evidence-probes", len(result.evidence_queries) == 3, str(result.evidence_queries))
+    check("evidence-items-collected", len(result.evidence_items) == 3, str(len(result.evidence_items)))
+    check("pass2-uses-pass1-evidence", evidence in calls[3])
     check("answer-returned", bool(result.answer))
     check("no-fallback", not result.used_fallback)
 
@@ -61,7 +67,7 @@ def main():
     check("route-comparison-unchanged", not relation_uses_two_pass("comparison"))
 
     print()
-    print("Pass-1 evidence      : PASS")
+    print("Multi-probe evidence : PASS")
     print("Slot extraction      : PASS")
     print("Pass-2 composition   : PASS")
     print("Function-only route  : PASS")
