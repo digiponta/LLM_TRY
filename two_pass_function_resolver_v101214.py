@@ -127,3 +127,43 @@ def deterministic_function_render(
 def relation_uses_two_pass(relation: str) -> bool:
     """Only function is routed to the v10.12.14 resolver."""
     return normalize(relation).lower() == "function"
+
+
+def resolve_two_pass_function(
+    subject: str,
+    generate,
+    malformed=None,
+) -> TwoPassFunctionResult:
+    """Run leakage-free two-pass resolution with an injected generator.
+
+    generate(query) must return text from the current model. malformed
+    optionally accepts generated text and returns True for unusable output.
+    """
+    evidence_query = function_evidence_query(subject)
+    evidence = normalize(generate(evidence_query))
+    if not evidence:
+        raise RuntimeError("Pass-1 evidence generation returned empty text")
+
+    structure = extract_structure_from_evidence(subject, evidence)
+    compose_prompt = function_compose_prompt(subject, evidence, structure)
+    composed = normalize(generate(compose_prompt))
+
+    bad = not composed
+    if malformed is not None and composed:
+        bad = bool(malformed(composed))
+
+    if bad:
+        answer = deterministic_function_render(subject, evidence, structure)
+        used_fallback = True
+    else:
+        answer = composed
+        used_fallback = False
+
+    return TwoPassFunctionResult(
+        subject=normalize(subject),
+        evidence=evidence,
+        structure=structure,
+        compose_prompt=compose_prompt,
+        answer=answer,
+        used_fallback=used_fallback,
+    )
