@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-LLM_TRY v10.11.0 Semantic Knowledge Architecture
+LLM_TRY v10.13.0 Semantic Knowledge Runtime Stable Architecture
 
 Single facade over:
   Atomic Proposition
