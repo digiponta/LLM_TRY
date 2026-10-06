@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 STEPS = [
-    ("Regression", [sys.executable, "run_semantic_role_generalization_v101210.py"]),
+    ("Regression", [sys.executable, "run_preservation_aware_semantic_role_v1012101.py"]),
     ("Dataset Build", [sys.executable, "build_semantic_role_split_v101210.py"]),
     ("Semantic Role Training", [sys.executable, "train_semantic_role_generalization_v101210.py"]),
     ("Semantic Role Evaluation", [sys.executable, "evaluate_semantic_role_generalization_v101210.py"]),
@@ -35,7 +35,7 @@ def run_step(name: str, command: list[str]) -> None:
 
 def main() -> None:
     print("=" * 116)
-    print(" LLM_TRY v10.12.10 Semantic Role Generalization - Full Verification")
+    print(" LLM_TRY v10.12.10.1 Preservation-Aware Semantic Role - Full Verification")
     print("=" * 116)
 
     required = [
@@ -61,7 +61,7 @@ def main() -> None:
     print("Dataset build           : PASS")
     print("Semantic role training  : PASS")
     print("Semantic role evaluation: PASS")
-    print("STATUS                  : SEMANTIC_ROLE_FULL_VERIFICATION_PASS")
+    print("STATUS                  : PRESERVATION_AWARE_SEMANTIC_ROLE_FULL_PASS")
 
 
 if __name__ == "__main__":
