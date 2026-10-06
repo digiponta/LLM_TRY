@@ -120,6 +120,12 @@ from retrieval_first_runtime_v1012161 import (
     resolve_subject as retrieval_first_resolve_subject,
     truth_allows_direct_retrieval,
 )
+from semantic_sleep_learning_v10131 import (
+    DEFAULT_NAGATO_SEMANTIC_MEMORY,
+    bootstrap_nagato_semantic_memory,
+    prepare_semantic_sleep_pairs,
+    semantic_sleep_status,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -3123,6 +3129,8 @@ def main() -> None:
     print("  /teachq Q => A teach an explicit question/answer pair")
     print("  /good         approve and save the previous AI answer for learning")
     print("  /train        run incremental training and reload checkpoint")
+    print("  /sleep        internalize pending Nagato Semantic Memory into the LLM")
+    print("  /sleep status show Semantic Memory / internalized / pending counts")
     print("  /trainbatch   batch-train all active verification repair tasks")
     print("  /batchstatus  show verification-aware batch repair plan")
     print("  /maintain     recover the previous question from trusted teaching data")
@@ -3182,6 +3190,31 @@ def main() -> None:
     semantic_knowledge = SemanticKnowledgeArchitecture(
         semantic_config
     )
+
+    nagato_semantic_memory_path = resolve_runtime_path(
+        DEFAULT_NAGATO_SEMANTIC_MEMORY
+    )
+    semantic_sleep_sync = bootstrap_nagato_semantic_memory(
+        resolve_runtime_path(args.corpus_memory),
+        nagato_semantic_memory_path,
+        unified_semantic_path,
+    )
+    semantic_sleep_initial = semantic_sleep_status(
+        nagato_semantic_memory_path,
+        learning_state,
+    )
+    print(
+        f"[Nagato Semantic Memory: "
+        f"corpus_records={semantic_sleep_sync.corpus_records}, "
+        f"subjects={semantic_sleep_sync.memory_subjects}, "
+        f"unified_added={semantic_sleep_sync.unified_added}, "
+        f"unified_preserved={semantic_sleep_sync.unified_preserved}, "
+        f"internalized={semantic_sleep_initial.internalized}, "
+        f"pending={semantic_sleep_initial.pending}]"
+    )
+    print("[use /sleep to internalize pending Semantic Memory into model weights]")
+    print()
+
     migrated_legacy_queue = consolidate_legacy_resolved(
         Path(args.knowledge_queue)
     )
@@ -4085,6 +4118,74 @@ def main() -> None:
                 print("[no valid trusted teacher; use /teach before /train]")
             else:
                 print("[no pending teaching candidate for maintenance]")
+            print()
+            continue
+
+        if command == "/sleep status":
+            sleep_status = semantic_sleep_status(
+                nagato_semantic_memory_path,
+                learning_state,
+            )
+            print(
+                f"[semantic sleep: "
+                f"memory={sleep_status.memory_subjects}, "
+                f"internalized={sleep_status.internalized}, "
+                f"pending={sleep_status.pending}]"
+            )
+            print()
+            continue
+
+        if command == "/sleep":
+            queued, before_sleep = prepare_semantic_sleep_pairs(
+                nagato_semantic_memory_path,
+                learning_log,
+                learning_state,
+            )
+            print(
+                f"[semantic sleep prepared: "
+                f"memory={before_sleep.memory_subjects}, "
+                f"internalized={before_sleep.internalized}, "
+                f"pending={before_sleep.pending}, "
+                f"newly_queued={queued}]"
+            )
+            if before_sleep.pending == 0:
+                print("[semantic sleep: all Nagato Semantic Memory is already internalized]")
+                print()
+                continue
+
+            new_model_path = run_online_training(args, model_path)
+            if new_model_path is not None:
+                model, checkpoint = LanguageModel.load_checkpoint(
+                    str(new_model_path),
+                    device=device,
+                )
+                model_path = new_model_path
+                print(f"[semantic sleep checkpoint reloaded: {model_path}]")
+                semantic_config = replace(
+                    semantic_config,
+                    checkpoint_fingerprints=(
+                        checkpoint_trained_fingerprints(checkpoint)
+                    ),
+                )
+                semantic_knowledge = SemanticKnowledgeArchitecture(
+                    semantic_config
+                )
+                load_concept_calibration(calibration_path, device)
+                history.clear()
+                last_user_text = None
+                last_ai_reply = None
+
+                after_sleep = semantic_sleep_status(
+                    nagato_semantic_memory_path,
+                    learning_state,
+                )
+                print(
+                    f"[semantic sleep completed: "
+                    f"memory={after_sleep.memory_subjects}, "
+                    f"internalized={after_sleep.internalized}, "
+                    f"pending={after_sleep.pending}]"
+                )
+                print("[conversation history cleared after semantic sleep]")
             print()
             continue
 
