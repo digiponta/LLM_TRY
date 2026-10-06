@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.14.1 Multi-Probe Two-Pass Function Resolver CLI."""
+"""LLM_TRY v10.12.16 Subject-Keyed Corpus Memory Function Resolver CLI."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ def parse_args():
     p.add_argument("--subject", required=True)
     p.add_argument("--model", default="model/model-gpu-v1.6.2-online.pt")
     p.add_argument("--tokenizer", default="model/tokenizer-v0.7-bpe.json")
+    p.add_argument("--corpus-memory", default="data/subject_keyed_corpus_memory_v101216.jsonl")
     return p.parse_args()
 
 
@@ -44,16 +45,21 @@ def main():
         args.subject,
         generate=generate,
         malformed=malformed_or_unstable,
+        corpus_memory=args.corpus_memory,
     )
 
     print("=" * 96)
-    print(" LLM_TRY v10.12.14.1 Multi-Probe Two-Pass Function Semantic Resolver")
+    print(" LLM_TRY v10.12.16 Subject-Keyed Corpus Memory Function Resolver")
     print("=" * 96)
     print("Device   :", device)
     if device.type == "cuda":
         print("GPU      :", torch.cuda.get_device_name(0))
     print("Model    :", args.model)
     print("Subject  :", result.subject)
+    print()
+    print("[Subject-Keyed Corpus Memory]")
+    print("hit      :", result.memory_hit)
+    print("evidence :", result.memory_evidence if result.memory_hit else "(none)")
     print()
     print("[Pass 1: generated evidence probes]")
     for i, (query, item) in enumerate(zip(result.evidence_queries, result.evidence_items), 1):
