@@ -31,6 +31,7 @@ TRUSTED_SOURCES = {
     "chat-manual",
     "chat-approved",
     "chat-recovery",
+    "semantic-sleep",
 }
 
 
