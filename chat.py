@@ -250,6 +250,14 @@ def parse_args() -> argparse.Namespace:
         help="Persistent v10.12.1 batch preservation audit log.",
     )
     parser.add_argument(
+        "--batch-preservation-force-fail",
+        action="store_true",
+        help=(
+            "TEST ONLY: force candidate rollback after preservation "
+            "evaluation to validate v10.12.2 rollback behavior."
+        ),
+    )
+    parser.add_argument(
         "--learn",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -4085,6 +4093,13 @@ def main() -> None:
                 args=args,
                 batch_fingerprints=plan.fingerprints,
             )
+
+            if args.batch_preservation_force_fail:
+                print(
+                    "[batch rollback test hook: forcing preservation FAIL "
+                    "after candidate evaluation]"
+                )
+                preservation_ok = False
 
             if not preservation_ok:
                 discard_batch_candidate(
