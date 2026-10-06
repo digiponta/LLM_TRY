@@ -96,3 +96,26 @@ run_full_regression_v1051.py
 
 This correction changes only the verification dependency; it does not change
 the v10.13.0 runtime architecture or production model.
+
+
+## Stable regression contract update
+
+A second verification issue was found after replacing the missing historical
+script. The old v10.5 regression suite itself encodes pre-Retrieval-First
+expectations, including model-known AI/LLM/quantum-mechanics behavior and
+unknown treatment for concepts that are now source-grounded in corpus memory.
+
+v10.13.0 therefore uses:
+
+run_stable_chat_runtime_v10130.py
+
+This validates the current stable contract directly:
+
+- input-quality rejection
+- corpus-memory retrieval
+- unknown memory miss / fallback
+- function structure extraction
+- Truth-State direct-retrieval policy
+
+Historical v10.5 regressions remain available as historical experiments but
+are no longer a release gate for v10.13.0.
