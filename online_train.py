@@ -124,6 +124,7 @@ def deduplicate_trusted_rows(
     priority = {
         "chat-approved": 1,
         "chat-manual": 2,
+        "semantic-sleep": 2,
         "chat-recovery": 3,
     }
     selected: dict[str, Tuple[str, str, str]] = {}
@@ -317,15 +318,18 @@ def main() -> None:
         raise SystemExit(3)
 
     manual_rows = [(u, a) for u, a, s in pending_rows if s == "chat-manual"]
+    sleep_rows = [(u, a) for u, a, s in pending_rows if s == "semantic-sleep"]
     approved_rows = [(u, a) for u, a, s in pending_rows if s == "chat-approved"]
     recovery_rows = [(u, a) for u, a, s in pending_rows if s == "chat-recovery"]
     auto_rows = [
         (u, a) for u, a, s in new_rows
-        if s not in ("chat-manual", "chat-approved", "chat-recovery")
+        if s not in ("chat-manual", "semantic-sleep", "chat-approved", "chat-recovery")
     ]
 
     weighted_new_pairs: List[Tuple[str, str]] = []
     for pair in manual_rows:
+        weighted_new_pairs.extend([pair] * max(1, args.manual_weight))
+    for pair in sleep_rows:
         weighted_new_pairs.extend([pair] * max(1, args.manual_weight))
     for pair in approved_rows:
         weighted_new_pairs.extend([pair] * max(1, args.manual_weight))
@@ -410,6 +414,7 @@ def main() -> None:
     print("New/rebind      :", len(pending_rows))
     print("Prior trusted   :", len(historical_rows), f"(x{args.trusted_replay_weight})")
     print("Manual new      :", len(manual_rows), f"(x{args.manual_weight})")
+    print("Semantic sleep  :", len(sleep_rows), f"(x{args.manual_weight})")
     print("Approved new    :", len(approved_rows), f"(x{args.manual_weight})")
     print("Recovery new    :", len(recovery_rows), f"(x{args.recovery_weight})")
     print("Legacy auto     :", len(auto_rows), "(ignored)")
