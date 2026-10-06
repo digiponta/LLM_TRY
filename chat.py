@@ -3203,6 +3203,7 @@ def main() -> None:
     semantic_sleep_initial = semantic_sleep_status(
         nagato_semantic_memory_path,
         learning_state,
+        checkpoint_trained_fingerprints(checkpoint),
     )
     print(
         f"[Nagato Semantic Memory: "
@@ -4126,6 +4127,7 @@ def main() -> None:
             sleep_status = semantic_sleep_status(
                 nagato_semantic_memory_path,
                 learning_state,
+                checkpoint_trained_fingerprints(checkpoint),
             )
             print(
                 f"[semantic sleep: "
@@ -4141,6 +4143,7 @@ def main() -> None:
                 nagato_semantic_memory_path,
                 learning_log,
                 learning_state,
+                checkpoint_trained_fingerprints(checkpoint),
             )
             print(
                 f"[semantic sleep prepared: "
@@ -4179,6 +4182,7 @@ def main() -> None:
                 after_sleep = semantic_sleep_status(
                     nagato_semantic_memory_path,
                     learning_state,
+                    checkpoint_trained_fingerprints(checkpoint),
                 )
                 print(
                     f"[semantic sleep completed: "
