@@ -352,7 +352,7 @@ class SemanticKnowledgeArchitecture:
     def status(self) -> dict[str, object]:
         return {
             "architecture": "Semantic Knowledge Architecture",
-            "version": "v10.12.14.1",
+            "version": "v10.13.0",
             "proposition_path": str(self.config.proposition_path),
             "subject_index_path": str(self.config.subject_index_path),
             "typed_index_path": str(self.config.typed_index_path),
@@ -374,6 +374,8 @@ class SemanticKnowledgeArchitecture:
                 "internalized",
                 "provenance",
                 "truth-state",
+                "subject-keyed-corpus-memory",
+                "retrieval-first-runtime",
                 "resolver",
                 "dispatcher",
             ),
