@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.14 Two-Pass Function Resolver CLI."""
+"""LLM_TRY v10.12.14.1 Multi-Probe Two-Pass Function Resolver CLI."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def main():
     )
 
     print("=" * 96)
-    print(" LLM_TRY v10.12.14 Two-Pass Function Semantic Resolver")
+    print(" LLM_TRY v10.12.14.1 Multi-Probe Two-Pass Function Semantic Resolver")
     print("=" * 96)
     print("Device   :", device)
     if device.type == "cuda":
@@ -55,7 +55,12 @@ def main():
     print("Model    :", args.model)
     print("Subject  :", result.subject)
     print()
-    print("[Pass 1: generated evidence]")
+    print("[Pass 1: generated evidence probes]")
+    for i, (query, item) in enumerate(zip(result.evidence_queries, result.evidence_items), 1):
+        print(f"{i}. Q: {query}")
+        print(f"   A: {item}")
+    print()
+    print("[Merged evidence]")
     print(result.evidence)
     print()
     print("[Extracted function structure]")
