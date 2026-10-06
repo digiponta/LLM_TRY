@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.12 Corpus-to-Semantic Knowledge dataset builder.
+"""LLM_TRY v10.12.15 Subject-to-Proposition + Corpus-to-Semantic dataset builder.
 
 Converts source-grounded Xは... sentences in data-nagato.txt into explicit
 subject / relation / object_description propositions.
@@ -78,13 +78,14 @@ def main() -> None:
     for index, row in enumerate(first_by_subject.values(), 1):
         item = decompose_role(row["concept"], row["question"], row["answer"])
         propositions.append({
-            "version": "v10.12.12",
+            "version": "v10.12.15",
             "semantic_id": f"nagato-sem-{index:03d}",
             "subject": item.subject,
             "relation": item.relation,
             "object_description": item.object_description,
             "question": item.question,
             "answer": item.answer,
+            "subject_mapping": f"{item.subject} => {item.answer}",
             "source_text": row["source_text"],
             "source": str(data_path),
         })
@@ -137,11 +138,12 @@ def main() -> None:
     train_counts = Counter(row["relation"] for row in train)
 
     print("=" * 116)
-    print(" LLM_TRY v10.12.12 Corpus-to-Semantic Knowledge Dataset")
+    print(" LLM_TRY v10.12.15 Subject-to-Proposition + Corpus-to-Semantic Dataset")
     print("=" * 116)
     print("Corpus                 :", data_path)
     print("Source candidates      :", len(candidates))
     print("Unique concepts        :", len(propositions))
+    print("Subject mappings       :", sum(1 for x in propositions if x.get("subject_mapping")))
     print("All relation counts    :", dict(sorted(before.items())))
     print("TRAIN rows             :", len(train))
     print("TRAIN relation counts  :", dict(sorted(train_counts.items())))
