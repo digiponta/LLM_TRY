@@ -219,13 +219,19 @@ def bootstrap_nagato_semantic_memory(
 def semantic_sleep_status(
     semantic_memory_path: Path,
     learning_state_path: Path,
+    checkpoint_fingerprints: set[str] | frozenset[str] | None = None,
 ) -> SemanticSleepStatus:
     rows = load_nagato_semantic_memory(semantic_memory_path)
     trained = load_trained_fingerprints(learning_state_path)
+    effective = trained
+    if checkpoint_fingerprints is not None:
+        effective = trained.intersection(
+            {str(value) for value in checkpoint_fingerprints}
+        )
     internalized = sum(
         1
         for row in rows
-        if str(row.get("fingerprint", "")) in trained
+        if str(row.get("fingerprint", "")) in effective
     )
     return SemanticSleepStatus(
         memory_subjects=len(rows),
@@ -238,6 +244,7 @@ def prepare_semantic_sleep_pairs(
     semantic_memory_path: Path,
     learning_log_path: Path,
     learning_state_path: Path,
+    checkpoint_fingerprints: set[str] | frozenset[str] | None = None,
 ) -> tuple[int, SemanticSleepStatus]:
     rows = load_nagato_semantic_memory(semantic_memory_path)
     trained = load_trained_fingerprints(learning_state_path)
@@ -282,4 +289,5 @@ def prepare_semantic_sleep_pairs(
     return queued, semantic_sleep_status(
         semantic_memory_path,
         learning_state_path,
+        checkpoint_fingerprints,
     )
