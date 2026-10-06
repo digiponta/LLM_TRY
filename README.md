@@ -1,6 +1,6 @@
 # LLM_TRY v10.13.0 — Semantic Knowledge Runtime Stable Release
 
-**Status: stable runtime candidate. Full verification must pass on the target machine before release promotion.**
+**Status: Stable Release — full v10.13.0 runtime verification PASS on the target RTX 3070 Ti environment.**
 
 v10.13.0 freezes the experimentally validated Semantic Knowledge Runtime architecture built through the v10.9-v10.12 series.
 
@@ -59,7 +59,7 @@ Subject-Keyed Corpus Memory
 Retrieval-First Runtime
 ~~~
 
-The latest verified v10.12.16.1 runtime result on RTX 3070 Ti was:
+The stable v10.13.0 runtime verification includes the verified v10.12.16.1 Retrieval-First result:
 
 ~~~text
 Subject HIT rate     : 100.00%
@@ -90,6 +90,21 @@ GPU tested      : NVIDIA GeForce RTX 3070 Ti
 v10.13.0 intentionally performs no additional model retraining. The stable runtime uses the current production checkpoint plus explicit semantic/retrieval layers.
 
 ## Full stable verification
+
+The v10.13.0 stable release was verified with:
+
+~~~text
+Semantic architecture : PASS
+Retrieval-first       : PASS
+Subject corpus memory : PASS
+Unknown fallback      : PASS
+Stable chat runtime   : PASS
+Truth/runtime syntax  : PASS
+Model retraining      : NONE
+Production mutation   : NONE
+STATUS                : SEMANTIC_KNOWLEDGE_RUNTIME_STABLE_FULL_PASS
+~~~
+
 
 Run:
 
