@@ -3876,6 +3876,7 @@ def main() -> None:
                 learning_log,
                 set(checkpoint_trained_fingerprints(checkpoint)),
                 set(plan.fingerprints),
+                set(plan.concepts),
             )
             print(
                 f"[batch preservation baseline: "
