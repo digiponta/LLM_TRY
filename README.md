@@ -4,6 +4,77 @@
 
 v10.13.0 freezes the experimentally validated Semantic Knowledge Runtime architecture built through the v10.9-v10.12 series.
 
+## Post-stable experiment: v10.13.1 Semantic Sleep Learning
+
+The post-v10.13.0 experimental extension adds a two-stage knowledge lifecycle for
+`data/data-nagato.txt`:
+
+~~~text
+data/data-nagato.txt
+      |
+      v
+Subject-Keyed Corpus Memory
+      |
+      v
+Nagato Semantic Memory
+data/nagato_semantic_memory_v10131.jsonl
+      |
+      +----> immediate runtime memory / Unified Semantic Memory sync
+      |
+      v
+/sleep
+      |
+      +----> pending semantic-sleep trusted pairs only
+      +----> existing incremental trainer
+      +----> stability replay / preservation mechanisms
+      |
+      v
+model/model-gpu-v1.6.2-online.pt
+      |
+      v
+checkpoint-bound INTERNALIZED knowledge
+~~~
+
+The design intentionally separates **memorization** from **internalization**.
+
+- On chat startup, the local `data-nagato.txt` corpus is converted to the
+  subject-keyed corpus representation when necessary.
+- Its subject/full-proposition records are immediately memorized into the
+  dedicated Nagato Semantic Memory.
+- Missing concepts are synchronized into Unified Semantic Memory without
+  overwriting existing promoted/manual/atomic semantic knowledge.
+- `/sleep status` shows Semantic Memory subjects, checkpoint-bound
+  INTERNALIZED subjects, and pending subjects.
+- `/sleep` converts only non-internalized Semantic Memory entries into trusted
+  `semantic-sleep` QA pairs and runs the existing incremental GPU trainer.
+- Successful training binds fingerprints into both the persistent learning state
+  and the checkpoint metadata, so already internalized items are not repeatedly
+  retrained.
+
+Run the model-independent regression first:
+
+~~~powershell
+python .\verify_semantic_sleep_v10131.py
+~~~
+
+Expected result:
+
+~~~text
+STATUS : SEMANTIC_SLEEP_V10131_PASS
+~~~
+
+Then start chat and inspect/execute sleep learning:
+
+~~~text
+/sleep status
+/sleep
+/sleep status
+~~~
+
+The stable v10.13.0 Retrieval-First and Truth-State behavior remains intact;
+`/sleep` is an explicit optional internalization step rather than a replacement
+for Semantic Memory retrieval.
+
 ## Stable Runtime Architecture
 
 ~~~text
