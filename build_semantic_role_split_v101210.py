@@ -74,7 +74,7 @@ def main() -> None:
     selected = rank_candidates(candidates, max(10, args.max_pairs))
 
     train_rows: list[dict] = []
-    seen_holdout: list[dict] = []
+    provisional_seen: list[dict] = []
     unseen_holdout: list[dict] = []
 
     threshold = int(args.seen_holdout_ratio * 10000)
@@ -82,7 +82,7 @@ def main() -> None:
     for index, row in enumerate(selected, 1):
         item = decompose_role(row["concept"], row["question"], row["answer"])
         payload = {
-            "version": "v10.12.10",
+            "version": "v10.12.10.1",
             "role_id": f"nagato-role-{index:03d}",
             "subject": item.subject,
             "relation": item.relation,
@@ -99,11 +99,24 @@ def main() -> None:
             continue
 
         if bucket(item.subject) % 10000 < threshold:
-            payload["split_reason"] = "seen-relation-unseen-concept"
-            seen_holdout.append(payload)
+            payload["split_reason"] = "provisional-seen-relation-holdout"
+            provisional_seen.append(payload)
         else:
             payload["split_reason"] = "semantic-role-train"
             train_rows.append(payload)
+
+    # Strict seen-role semantics: a relation belongs in the seen-role HOLDOUT
+    # only if that relation actually exists in TRAIN. Any relation absent from
+    # TRAIN is moved to unseen-role HOLDOUT instead.
+    train_relations = {x["relation"] for x in train_rows}
+    seen_holdout: list[dict] = []
+    for row in provisional_seen:
+        if row["relation"] in train_relations:
+            row["split_reason"] = "seen-relation-unseen-concept"
+            seen_holdout.append(row)
+        else:
+            row["split_reason"] = "unseen-relation-holdout"
+            unseen_holdout.append(row)
 
     train_subjects = {x["subject"] for x in train_rows}
     seen_subjects = {x["subject"] for x in seen_holdout}
@@ -113,7 +126,6 @@ def main() -> None:
         | (train_subjects & unseen_subjects)
     )
 
-    train_relations = {x["relation"] for x in train_rows}
     seen_relations = {x["relation"] for x in seen_holdout}
     unseen_relations = {x["relation"] for x in unseen_holdout}
 
