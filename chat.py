@@ -93,6 +93,8 @@ from knowledge_promotion_v10114 import (
 )
 from internalized_verification_v10119 import (
     active_verifications,
+    batch_repair_plan,
+    mark_batch_retrain,
     mark_retrain as mark_internalized_verification_retrain,
     mark_verified as mark_internalized_verification_verified,
     upsert_unstable as upsert_internalized_unstable,
@@ -2613,7 +2615,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.11.9 Internalized Verification Loop")
+    print(" LLM_TRY Chat - v10.12.0 Verification-Aware Batch Learning")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2751,6 +2753,8 @@ def main() -> None:
     print("  /teachq Q => A teach an explicit question/answer pair")
     print("  /good         approve and save the previous AI answer for learning")
     print("  /train        run incremental training and reload checkpoint")
+    print("  /trainbatch   batch-train all active verification repair tasks")
+    print("  /batchstatus  show verification-aware batch repair plan")
     print("  /maintain     recover the previous question from trusted teaching data")
     print("  /maintain all recover all pending trusted teaching candidates")
     print("  /propteach S  decompose and persist semantic proposition statement")
@@ -2953,6 +2957,29 @@ def main() -> None:
                 f"typed_index={sync.typed_index_count}, "
                 f"unified_subjects={sync.unified_subject_count}]"
             )
+            print()
+            continue
+
+        if command == "/batchstatus":
+            plan = batch_repair_plan(
+                Path(args.internalized_verification)
+            )
+            if plan.count == 0:
+                print("[verification batch: no active repair tasks]")
+            else:
+                print(
+                    f"[verification batch: tasks={plan.count}, "
+                    f"fingerprints={len(plan.fingerprints)}, "
+                    f"concepts={len(plan.concepts)}]"
+                )
+                for index, row in enumerate(plan.tasks, 1):
+                    print(
+                        f"  {index:02d}. "
+                        f"concept={row.get('concept', '')!r} "
+                        f"status={row.get('status', '')} "
+                        f"attempts={row.get('attempts', 0)} "
+                        f"fingerprint={str(row.get('fingerprint', ''))[:12]}"
+                    )
             print()
             continue
 
@@ -3688,6 +3715,97 @@ def main() -> None:
                 print("[no valid trusted teacher; use /teach before /train]")
             else:
                 print("[no pending teaching candidate for maintenance]")
+            print()
+            continue
+
+        if command == "/trainbatch":
+            verification_path = Path(
+                args.internalized_verification
+            )
+            plan = batch_repair_plan(verification_path)
+            if plan.count == 0:
+                print("[verification batch: no active repair tasks]")
+                print()
+                continue
+
+            reactivated_count = 0
+            already_pending_count = 0
+            for row in plan.tasks:
+                question = str(row.get("question", "")).strip()
+                teacher = str(
+                    row.get("teacher_answer", "")
+                ).strip()
+                if mark_pair_for_retraining(
+                    learning_state,
+                    question,
+                    teacher,
+                ):
+                    reactivated_count += 1
+                else:
+                    already_pending_count += 1
+
+            mark_batch_retrain(
+                verification_path,
+                set(plan.fingerprints),
+            )
+            print(
+                f"[verification batch prepared: "
+                f"tasks={plan.count}, "
+                f"reactivated={reactivated_count}, "
+                f"already_pending={already_pending_count}, "
+                f"concepts={'|'.join(plan.concepts)}]"
+            )
+
+            new_model_path = run_online_training(
+                args,
+                model_path,
+            )
+            if new_model_path is not None:
+                model, checkpoint = LanguageModel.load_checkpoint(
+                    str(new_model_path),
+                    device=device,
+                )
+                model_path = new_model_path
+                print(
+                    f"[reloaded batch-trained checkpoint: "
+                    f"{model_path}]"
+                )
+                semantic_config = replace(
+                    semantic_config,
+                    checkpoint_fingerprints=(
+                        checkpoint_trained_fingerprints(
+                            checkpoint
+                        )
+                    ),
+                )
+                semantic_knowledge = (
+                    SemanticKnowledgeArchitecture(
+                        semantic_config
+                    )
+                )
+                print(
+                    f"[checkpoint binding refreshed: "
+                    f"{len(semantic_config.checkpoint_fingerprints or ())} "
+                    "fingerprint(s)]"
+                )
+                print(
+                    f"[verification batch trained: "
+                    f"{plan.count} task(s); "
+                    "re-query each concept to resolve verification]"
+                )
+                for concept in plan.concepts:
+                    print(f"  -> {concept}")
+                load_concept_calibration(
+                    calibration_path,
+                    device,
+                )
+                history.clear()
+                last_user_text = None
+                last_ai_reply = None
+                print(
+                    "[conversation history cleared after "
+                    "batch training]"
+                )
             print()
             continue
 
