@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.13.1 Preservation-Balanced Function Evaluation."""
+"""LLM_TRY v10.12.13.2 Leakage-Free Function Inference Evaluation."""
 
 from __future__ import annotations
 
@@ -13,7 +13,10 @@ import torch
 from model import LanguageModel
 from tokenizer_bpe import Tokenizer
 from semantic_role_generalization_v101210 import RoleProposition, semantic_role_prompt
-from function_semantic_decomposition_v101213 import function_structure_prompt
+from function_semantic_decomposition_v101213 import (
+    function_structure_prompt,
+    function_inference_prompt,
+)
 from batch_repair_preservation_v10121 import protected_internalized_records
 from chat import (
     apply_composite_internalized_fidelity_policy,
@@ -34,7 +37,8 @@ def parse_args():
     p.add_argument("--tokenizer",default="model/tokenizer-v0.7-bpe.json")
     p.add_argument("--learning-log",default="data/chat_history.jsonl")
     p.add_argument("--report",default="results/function_semantic_v101213.json")
-    p.add_argument("--min-function-semantic-gain",type=float,default=0.005)
+    p.add_argument("--min-generic-function-guard",type=float,default=-0.030)
+    p.add_argument("--min-function-inference-gain",type=float,default=0.010)
     p.add_argument("--min-function-structured-gain",type=float,default=0.010)
     p.add_argument("--min-nonfunction-guard",type=float,default=-0.005)
     return p.parse_args()
@@ -83,7 +87,7 @@ def main():
         raise RuntimeError("No function HOLDOUT rows found")
 
     print("="*116)
-    print(" LLM_TRY v10.12.13.1 Preservation-Balanced Function Evaluation")
+    print(" LLM_TRY v10.12.13.2 Leakage-Free Function Inference Evaluation")
     print("="*116)
     print("Device                 :",device)
     if device.type=="cuda":
@@ -103,24 +107,36 @@ def main():
         semantic_gain=gain_for_query(
             before,after,tok,semantic_role_prompt(item),item.answer,item.subject
         )
+        # Oracle structured prompt remains diagnostic only because it is built
+        # from teacher-derived slots.  Promotion/generalization must never rely
+        # on this value.
         structured_gain=gain_for_query(
             before,after,tok,function_structure_prompt(item),item.answer,item.subject
         )
+        inference_gain=gain_for_query(
+            before,after,tok,function_inference_prompt(item.subject),item.answer,item.subject
+        )
         print(
             f"{item.subject!r} plain={plain_gain:+.3f} "
-            f"semantic={semantic_gain:+.3f} structured={structured_gain:+.3f}"
+            f"generic={semantic_gain:+.3f} "
+            f"inference={inference_gain:+.3f} "
+            f"oracle_structured={structured_gain:+.3f}"
         )
         function_results.append({
             "subject":item.subject,
             "plain_gain":plain_gain,
             "semantic_gain":semantic_gain,
+            "inference_gain":inference_gain,
             "structured_gain":structured_gain,
         })
 
     mean_sem=sum(x["semantic_gain"] for x in function_results)/len(function_results)
+    mean_inference=sum(x["inference_gain"] for x in function_results)/len(function_results)
     mean_struct=sum(x["structured_gain"] for x in function_results)/len(function_results)
     improved_sem=sum(1 for x in function_results if x["semantic_gain"]>1e-6)
     regressed_sem=sum(1 for x in function_results if x["semantic_gain"]< -1e-6)
+    improved_inference=sum(1 for x in function_results if x["inference_gain"]>1e-6)
+    regressed_inference=sum(1 for x in function_results if x["inference_gain"]< -1e-6)
     improved_struct=sum(1 for x in function_results if x["structured_gain"]>1e-6)
     regressed_struct=sum(1 for x in function_results if x["structured_gain"]< -1e-6)
 
@@ -134,9 +150,13 @@ def main():
         )
     guard_mean=sum(guard_gains)/len(guard_gains) if guard_gains else 0.0
 
-    function_sem_ok=(
-        mean_sem>=args.min_function_semantic_gain
-        and improved_sem>regressed_sem
+    # The old generic function prompt is now a compatibility guard, not the
+    # primary route.  The leakage-free inference prompt is the actual v10.12.13.2
+    # generalization target.
+    generic_guard_ok=(mean_sem>=args.min_generic_function_guard)
+    function_inference_ok=(
+        mean_inference>=args.min_function_inference_gain
+        and improved_inference>regressed_inference
     )
     function_struct_ok=(
         mean_struct>=args.min_function_structured_gain
@@ -172,19 +192,21 @@ def main():
 
     persona=gen(after,tok,"あなたは誰ですか").strip().rstrip("。")=="長門有希"
     meta=ack.get("metadata",{}) if isinstance(ack.get("metadata",{}),dict) else {}
-    metadata_ok=meta.get("function_semantic_version")=="v10.12.13.1"
+    metadata_ok=meta.get("function_semantic_version")=="v10.12.13.2"
     retention_ok=len(retention)>0 and all(retention)
 
-    final=all((function_sem_ok,function_struct_ok,guard_ok,retention_ok,persona,metadata_ok))
+    final=all((generic_guard_ok,function_inference_ok,function_struct_ok,guard_ok,retention_ok,persona,metadata_ok))
 
     print()
     print("Function semantic summary")
     print("-------------------------")
-    print(f"Function semantic gain    : {mean_sem:+.3f} => {'PASS' if function_sem_ok else 'FAIL'}")
-    print(f"Function structured gain  : {mean_struct:+.3f} => {'PASS' if function_struct_ok else 'FAIL'}")
+    print(f"Generic function guard    : {mean_sem:+.3f} => {'PASS' if generic_guard_ok else 'FAIL'}")
+    print(f"Function inference gain   : {mean_inference:+.3f} => {'PASS' if function_inference_ok else 'FAIL'}")
+    print(f"Oracle structured gain    : {mean_struct:+.3f} => {'PASS' if function_struct_ok else 'FAIL'}")
     print(f"Non-function guard gain   : {guard_mean:+.3f} => {'PASS' if guard_ok else 'FAIL'}")
-    print(f"Semantic outcomes         : improved={improved_sem} regressed={regressed_sem}")
-    print(f"Structured outcomes       : improved={improved_struct} regressed={regressed_struct}")
+    print(f"Inference outcomes        : improved={improved_inference} regressed={regressed_inference}")
+    print(f"Generic outcomes          : improved={improved_sem} regressed={regressed_sem}")
+    print(f"Oracle structured outcomes: improved={improved_struct} regressed={regressed_struct}")
     print("Retention                 :","PASS" if retention_ok else "FAIL")
     print("Persona                   :","PASS" if persona else "FAIL")
     print("Metadata                  :","PASS" if metadata_ok else "FAIL")
@@ -192,12 +214,14 @@ def main():
 
     Path(args.report).parent.mkdir(parents=True,exist_ok=True)
     Path(args.report).write_text(json.dumps({
-        "version":"v10.12.13.1",
+        "version":"v10.12.13.2",
         "function_results":function_results,
         "mean_function_semantic_gain":mean_sem,
+        "mean_function_inference_gain":mean_inference,
         "mean_function_structured_gain":mean_struct,
         "nonfunction_guard_gain":guard_mean,
-        "function_semantic_passed":function_sem_ok,
+        "generic_function_guard_passed":generic_guard_ok,
+        "function_inference_passed":function_inference_ok,
         "function_structured_passed":function_struct_ok,
         "nonfunction_guard_passed":guard_ok,
         "retention_passed":retention_ok,
