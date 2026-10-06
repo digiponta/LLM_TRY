@@ -18,6 +18,8 @@ from torch.utils.data import DataLoader, Dataset
 from model import LanguageModel
 from tokenizer_bpe import Tokenizer
 from semantic_role_generalization_v101210 import RoleProposition, training_queries
+from batch_repair_preservation_v10121 import protected_internalized_records
+from chat import checkpoint_trained_fingerprints
 
 
 USER_PREFIX = "人: "
@@ -42,6 +44,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--weight-decay", type=float, default=0.01)
     p.add_argument("--grad-clip", type=float, default=0.5)
     p.add_argument("--freeze-blocks", type=int, default=2)
+    p.add_argument("--learning-log", default="data/chat_history.jsonl")
+    p.add_argument(
+        "--preservation-weight",
+        type=int,
+        default=2,
+        help="Replay multiplier for checkpoint-bound protected INTERNALIZED pairs.",
+    )
     return p.parse_args()
 
 
@@ -153,6 +162,21 @@ def main() -> None:
     tokenizer = Tokenizer.load(args.tokenizer)
     model, checkpoint = LanguageModel.load_checkpoint(args.base_model, device=device)
 
+    checkpoint_fp = set(checkpoint_trained_fingerprints(checkpoint))
+    protected = protected_internalized_records(
+        Path(args.learning_log),
+        checkpoint_fp,
+        set(),
+        set(),
+    )
+    preservation_pairs: list[tuple[str, str]] = []
+    for record in protected:
+        for _ in range(max(0, args.preservation_weight)):
+            preservation_pairs.append((record.question, record.teacher_answer))
+
+    role_pair_count = len(pairs)
+    pairs = list(pairs) + preservation_pairs
+
     freeze_blocks = max(0, min(args.freeze_blocks, len(model.blocks)))
     for index in range(freeze_blocks):
         for parameter in model.blocks[index].parameters():
@@ -176,8 +200,11 @@ def main() -> None:
     print("Base model         :", args.base_model)
     print("TRAIN subjects     :", subject_count)
     print("TRAIN relations    :", sorted(relations))
-    print("Augmented rows     :", len(pairs))
-    print("Prompts / row      :", 3)
+    print("Role QA rows       :", role_pair_count)
+    print("Protected concepts :", len(protected))
+    print("Preservation rows  :", len(preservation_pairs))
+    print("Total train rows   :", len(pairs))
+    print("Prompts / role row :", 3)
     print("Frozen blocks      :", freeze_blocks)
     print("Learning rate      :", args.learning_rate)
     print("Epoch limit        :", args.epochs)
@@ -227,10 +254,14 @@ def main() -> None:
         metadata = {}
     metadata = dict(metadata)
     metadata.update({
-        "semantic_role_version": "v10.12.10",
+        "semantic_role_version": "v10.12.10.1",
         "semantic_role_train": args.train,
         "semantic_role_train_subjects": subject_count,
         "semantic_role_relations": sorted(relations),
+        "semantic_role_role_rows": role_pair_count,
+        "semantic_role_preservation_rows": len(preservation_pairs),
+        "semantic_role_protected_concepts": [record.concept for record in protected],
+        "semantic_role_preservation_weight": args.preservation_weight,
         "semantic_role_augmented_rows": len(pairs),
         "semantic_role_learning_rate": args.learning_rate,
         "semantic_role_best_epoch": best_epoch,
