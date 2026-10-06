@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.10 Semantic Role Generalization trainer."""
+"""LLM_TRY v10.12.11 Role-Balanced Semantic Training."""
 
 from __future__ import annotations
 
@@ -51,17 +51,26 @@ def parse_args() -> argparse.Namespace:
         default=2,
         help="Replay multiplier for checkpoint-bound protected INTERNALIZED pairs.",
     )
+    p.add_argument(
+        "--role-balance",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Deterministically oversample minority semantic roles.",
+    )
+    p.add_argument(
+        "--max-role-multiplier",
+        type=int,
+        default=4,
+        help="Maximum oversampling multiplier for any one role.",
+    )
     return p.parse_args()
 
 
-def load_augmented_pairs(path: Path) -> tuple[List[Tuple[str, str]], set[str], int]:
+def load_role_items(path: Path) -> list[RoleProposition]:
     if not path.exists():
         raise FileNotFoundError(path)
 
-    pairs: List[Tuple[str, str]] = []
-    relations: set[str] = set()
-    subjects: set[str] = set()
-
+    items: list[RoleProposition] = []
     for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not raw.strip():
             continue
@@ -78,17 +87,60 @@ def load_augmented_pairs(path: Path) -> tuple[List[Tuple[str, str]], set[str], i
         if not all((subject, relation, object_description, question, answer)):
             continue
 
-        item = RoleProposition(
+        items.append(RoleProposition(
             subject=subject,
             relation=relation,
             object_description=object_description,
             question=question,
             answer=answer,
-        )
-        subjects.add(subject)
-        relations.add(relation)
+        ))
+    return items
+
+
+def role_counts(items: list[RoleProposition]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        counts[item.relation] = counts.get(item.relation, 0) + 1
+    return counts
+
+
+def balance_role_items(
+    items: list[RoleProposition],
+    *,
+    max_multiplier: int = 4,
+) -> tuple[list[RoleProposition], dict[str, int], dict[str, int]]:
+    """Deterministically oversample minority roles toward the majority count."""
+    if not items:
+        return [], {}, {}
+
+    before = role_counts(items)
+    target = max(before.values())
+    cap = max(1, int(max_multiplier))
+
+    grouped: dict[str, list[RoleProposition]] = {}
+    for item in items:
+        grouped.setdefault(item.relation, []).append(item)
+
+    balanced: list[RoleProposition] = []
+    for relation in sorted(grouped):
+        rows = grouped[relation]
+        allowed = min(target, len(rows) * cap)
+        for index in range(allowed):
+            balanced.append(rows[index % len(rows)])
+
+    after = role_counts(balanced)
+    return balanced, before, after
+
+
+def load_augmented_pairs(path: Path) -> tuple[List[Tuple[str, str]], set[str], int]:
+    items = load_role_items(path)
+    pairs: List[Tuple[str, str]] = []
+    relations = {item.relation for item in items}
+    subjects = {item.subject for item in items}
+
+    for item in items:
         for query in training_queries(item):
-            pairs.append((query, answer))
+            pairs.append((query, item.answer))
 
     if len(subjects) < 2:
         raise ValueError("At least two TRAIN subjects are required")
@@ -157,7 +209,31 @@ def main() -> None:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(SEED)
 
-    pairs, relations, subject_count = load_augmented_pairs(Path(args.train))
+    raw_items = load_role_items(Path(args.train))
+    raw_relations = {item.relation for item in raw_items}
+    raw_subjects = {item.subject for item in raw_items}
+    if len(raw_subjects) < 2:
+        raise ValueError("At least two TRAIN subjects are required")
+    if len(raw_relations) < 2:
+        raise ValueError("At least two TRAIN relation types are required")
+
+    if args.role_balance:
+        train_items, role_counts_before, role_counts_after = balance_role_items(
+            raw_items,
+            max_multiplier=args.max_role_multiplier,
+        )
+    else:
+        train_items = list(raw_items)
+        role_counts_before = role_counts(raw_items)
+        role_counts_after = dict(role_counts_before)
+
+    pairs: list[tuple[str, str]] = []
+    for item in train_items:
+        for query in training_queries(item):
+            pairs.append((query, item.answer))
+
+    relations = set(role_counts_after)
+    subject_count = len(raw_subjects)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = Tokenizer.load(args.tokenizer)
     model, checkpoint = LanguageModel.load_checkpoint(args.base_model, device=device)
@@ -192,7 +268,7 @@ def main() -> None:
     )
 
     print("=" * 112)
-    print(" LLM_TRY v10.12.10 Semantic Role Generalization Training")
+    print(" LLM_TRY v10.12.11 Role-Balanced Semantic Training")
     print("=" * 112)
     print("Device             :", device)
     if device.type == "cuda":
@@ -200,6 +276,10 @@ def main() -> None:
     print("Base model         :", args.base_model)
     print("TRAIN subjects     :", subject_count)
     print("TRAIN relations    :", sorted(relations))
+    print("Role counts before :", role_counts_before)
+    print("Role counts after  :", role_counts_after)
+    print("Role balancing     :", args.role_balance)
+    print("Max role multiplier:", args.max_role_multiplier)
     print("Role QA rows       :", role_pair_count)
     print("Protected concepts :", len(protected))
     print("Preservation rows  :", len(preservation_pairs))
@@ -254,10 +334,14 @@ def main() -> None:
         metadata = {}
     metadata = dict(metadata)
     metadata.update({
-        "semantic_role_version": "v10.12.10.1",
+        "semantic_role_version": "v10.12.11",
         "semantic_role_train": args.train,
         "semantic_role_train_subjects": subject_count,
         "semantic_role_relations": sorted(relations),
+        "semantic_role_balance_enabled": args.role_balance,
+        "semantic_role_counts_before": role_counts_before,
+        "semantic_role_counts_after": role_counts_after,
+        "semantic_role_max_multiplier": args.max_role_multiplier,
         "semantic_role_role_rows": role_pair_count,
         "semantic_role_preservation_rows": len(preservation_pairs),
         "semantic_role_protected_concepts": [record.concept for record in protected],
