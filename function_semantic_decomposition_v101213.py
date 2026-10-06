@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.13 Function Semantic Decomposition utilities."""
+"""LLM_TRY v10.12.13.2 Leakage-Free Function Semantic utilities."""
 
 from __future__ import annotations
 
@@ -119,3 +119,30 @@ def function_slot_prompt(item: RoleProposition) -> str:
 
 def function_training_queries(item: RoleProposition) -> tuple[str, str]:
     return (function_structure_prompt(item), function_slot_prompt(item))
+
+
+def function_inference_prompt(subject: str) -> str:
+    """Leakage-free function query. No teacher answer or gold slots are used."""
+    subject_n = normalize(subject)
+    if not subject_n:
+        raise ValueError("subject must be non-empty")
+    return (
+        f"主語: {subject_n}\n"
+        "意味役割: function\n"
+        "action: ?\n"
+        "target: ?\n"
+        "purpose: ?\n"
+        "要求: action・target・purpose を学習済み知識から推定し、"
+        "対象の機能を簡潔に説明してください"
+    )
+
+
+def function_inference_slot_prompt(subject: str) -> str:
+    """Compact leakage-free form used for inference/generalization training."""
+    subject_n = normalize(subject)
+    if not subject_n:
+        raise ValueError("subject must be non-empty")
+    return (
+        f"subject={subject_n} relation=function "
+        "function.action=? function.target=? function.purpose=? -> ?"
+    )
