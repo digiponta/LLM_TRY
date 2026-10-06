@@ -46,8 +46,18 @@ def main() -> None:
                 "source": "chat-manual",
             },
             {
+                "user": "数学とは",
+                "assistant": "数学は数・量・構造・空間を論理的に扱う学問である。",
+                "source": "chat-manual",
+            },
+            {
                 "user": "文学とは",
                 "assistant": "文学は言語による芸術を探究する学問である。",
+                "source": "chat-manual",
+            },
+            {
+                "user": "文学とは",
+                "assistant": "文学とは、言語を用いた芸術である。",
                 "source": "chat-manual",
             },
         ]
@@ -61,8 +71,8 @@ def main() -> None:
             for row in rows
         }
         repair_fp = pair_fingerprint(
-            rows[2]["user"],
-            rows[2]["assistant"],
+            rows[4]["user"],
+            rows[4]["assistant"],
         )
 
         protected = protected_internalized_records(
@@ -72,11 +82,24 @@ def main() -> None:
             {"文学"},
         )
         check(
-            "repair-target-excluded",
+            "repair-target-concept-excluded",
             len(protected) == 2
             and {r.concept for r in protected}
-            == {"量子センサー", "数学"},
-            str([r.concept for r in protected]),
+            == {"量子センサー", "数学"}
+            and all(r.concept != "文学" for r in protected),
+            str([(r.concept, r.teacher_answer) for r in protected]),
+        )
+
+        math_records = [
+            record for record in protected
+            if record.concept == "数学"
+        ]
+        check(
+            "protected-concept-latest-only",
+            len(math_records) == 1
+            and math_records[0].teacher_answer
+            == rows[2]["assistant"],
+            str([(r.concept, r.teacher_answer) for r in protected]),
         )
 
         passing = [
@@ -137,7 +160,8 @@ def main() -> None:
         )
 
     print()
-    print("Protected-set selection : PASS")
+    print("Concept-level exclusion : PASS")
+    print("Latest-only protection  : PASS")
     print("All-pass batch gate      : PASS")
     print("Regression detection     : PASS")
     print("STATUS                   : BATCH_REPAIR_PRESERVATION_GATE_PASS")
