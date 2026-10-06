@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.14.1 Multi-Probe Two-Pass Function Semantic Resolver.
+"""LLM_TRY v10.12.16 Subject-Keyed Corpus Memory + Two-Pass Function Resolver.
 
 Pass 1:
     Generate ordinary subject knowledge from the current production model.
@@ -16,7 +16,9 @@ No model weights are modified.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
+from subject_keyed_corpus_memory_v101216 import compose_subject_evidence
 from function_semantic_decomposition_v101213 import (
     FunctionStructure,
     infer_action,
@@ -36,6 +38,8 @@ class TwoPassFunctionResult:
     used_fallback: bool
     evidence_queries: tuple[str, ...] = ()
     evidence_items: tuple[str, ...] = ()
+    memory_evidence: str = ""
+    memory_hit: bool = False
 
 
 def extract_structure_from_evidence(
@@ -148,6 +152,7 @@ def resolve_two_pass_function(
     subject: str,
     generate,
     malformed=None,
+    corpus_memory: str | Path | None = None,
 ) -> TwoPassFunctionResult:
     """Run leakage-free two-pass resolution with an injected generator.
 
@@ -156,6 +161,17 @@ def resolve_two_pass_function(
     """
     queries = function_evidence_queries(subject)
     evidence_items: list[str] = []
+
+    memory_evidence = ""
+    if corpus_memory is not None:
+        memory_evidence = normalize(
+            compose_subject_evidence(Path(corpus_memory), subject)
+        )
+        if memory_evidence:
+            evidence_items.append(memory_evidence)
+
+    # Generated probes remain useful as secondary evidence, but exact corpus
+    # memory is the primary subject-keyed source when present.
     for query in queries:
         generated = normalize(generate(query))
         if not generated:
@@ -193,4 +209,6 @@ def resolve_two_pass_function(
         used_fallback=used_fallback,
         evidence_queries=queries,
         evidence_items=tuple(evidence_items),
+        memory_evidence=memory_evidence,
+        memory_hit=bool(memory_evidence),
     )
