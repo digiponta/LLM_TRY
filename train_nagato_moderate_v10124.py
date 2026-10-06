@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import math
 import random
+import shutil
 import time
 from pathlib import Path
 from typing import List, Sequence, Tuple
@@ -78,6 +79,14 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Freeze the first N transformer blocks during moderate corpus "
             "adaptation. Default: 2."
+        ),
+    )
+    p.add_argument(
+        "--baseline-snapshot",
+        default="model/model-gpu-v1.6.2-online-pre-nagato.pt",
+        help=(
+            "Persistent copy of the pre-Nagato base checkpoint for "
+            "v10.12.6 before/after evaluation. Existing snapshots are kept."
         ),
     )
     return p.parse_args()
@@ -213,6 +222,20 @@ def main() -> None:
         raise FileNotFoundError(f"Tokenizer not found: {tokenizer_path}")
     if not base_path.exists():
         raise FileNotFoundError(f"Base model not found: {base_path}")
+
+    baseline_snapshot = Path(args.baseline_snapshot)
+    if not baseline_snapshot.exists():
+        baseline_snapshot.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(base_path, baseline_snapshot)
+        print(
+            f"[pre-Nagato baseline snapshot created: "
+            f"{baseline_snapshot}]"
+        )
+    else:
+        print(
+            f"[pre-Nagato baseline snapshot retained: "
+            f"{baseline_snapshot}]"
+        )
 
     tokenizer = Tokenizer.load(str(tokenizer_path))
     model, checkpoint = LanguageModel.load_checkpoint(
@@ -403,6 +426,7 @@ def main() -> None:
         "nagato_moderate_validation_ratio": args.validation_ratio,
         "nagato_moderate_frozen_blocks": freeze_blocks,
         "nagato_moderate_base_model": str(base_path),
+        "nagato_moderate_baseline_snapshot": str(baseline_snapshot),
     })
 
     model.save_checkpoint(
