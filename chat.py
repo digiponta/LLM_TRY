@@ -91,6 +91,11 @@ from knowledge_promotion_v10114 import (
     pending_knowledge_requests,
     promote_knowledge,
 )
+from batch_repair_preservation_v10121 import (
+    PreservationProbe,
+    append_preservation_audit,
+    protected_internalized_records,
+)
 from internalized_verification_v10119 import (
     active_verifications,
     batch_repair_plan,
@@ -127,6 +132,9 @@ DEFAULT_TYPED_SUBJECT_INDEX = "data/typed_subject_propositions_v10100.jsonl"
 DEFAULT_TRUTH_STORE = "data/truth_state_v10103.jsonl"
 DEFAULT_INTERNALIZED_VERIFICATION = (
     "data/internalized_verification_v10119.jsonl"
+)
+DEFAULT_BATCH_PRESERVATION_AUDIT = (
+    "data/batch_preservation_v10121.jsonl"
 )
 
 USER_PREFIX = "人: "
@@ -234,6 +242,11 @@ def parse_args() -> argparse.Namespace:
         "--internalized-verification",
         default=DEFAULT_INTERNALIZED_VERIFICATION,
         help="Persistent INTERNALIZED_UNSTABLE verification loop store.",
+    )
+    parser.add_argument(
+        "--batch-preservation-audit",
+        default=DEFAULT_BATCH_PRESERVATION_AUDIT,
+        help="Persistent v10.12.1 batch preservation audit log.",
     )
     parser.add_argument(
         "--learn",
@@ -2653,7 +2666,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.12.0 Verification-Aware Batch Learning")
+    print(" LLM_TRY Chat - v10.12.1 Batch Repair Preservation Gate")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2713,6 +2726,99 @@ def print_info(
         if binding_version:
             print("Binding version :", binding_version)
     print()
+
+
+def run_batch_preservation_gate(
+    *,
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    protected_records,
+    args: argparse.Namespace,
+    batch_fingerprints: tuple[str, ...],
+) -> tuple[bool, int, int]:
+    probes: list[PreservationProbe] = []
+
+    for record in protected_records:
+        prompt, _ = build_prompt(
+            history=[],
+            user_text=record.question,
+            history_turns=0,
+        )
+        generated = generate_reply(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            max_new_tokens=args.max_new_tokens,
+            temperature=0.0,
+            top_k=args.top_k,
+            repetition_penalty=args.repetition_penalty,
+            seed=0,
+        )
+        composite = composite_internalized_teacher_fidelity(
+            model=model,
+            tokenizer=tokenizer,
+            generated_answer=generated.text,
+            teacher_answer=record.teacher_answer,
+            concept=record.concept,
+        )
+        fidelity_ok, fidelity_reason = (
+            apply_composite_internalized_fidelity_policy(
+                accepted=not malformed_or_unstable(generated.text),
+                result=composite,
+                semantic_threshold=args.min_internalized_fidelity,
+                lexical_threshold=args.min_internalized_lexical_coverage,
+                required_threshold=args.min_internalized_required_coverage,
+            )
+        )
+        reason = (
+            fidelity_reason
+            if fidelity_reason
+            else (
+                "malformed/repetitive output"
+                if malformed_or_unstable(generated.text)
+                else "preservation gate rejected"
+            )
+        )
+        probes.append(
+            PreservationProbe(
+                concept=record.concept,
+                question=record.question,
+                teacher_answer=record.teacher_answer,
+                fingerprint=record.fingerprint,
+                generated_answer=generated.text,
+                semantic=composite.semantic_similarity,
+                lexical=composite.lexical_coverage,
+                required=composite.required_coverage,
+                contradiction=composite.contradiction,
+                passed=fidelity_ok,
+                reason=reason,
+            )
+        )
+        print(
+            f"[preservation {'PASS' if fidelity_ok else 'FAIL'}: "
+            f"concept={record.concept!r}, "
+            f"sem={composite.semantic_similarity:.3f}, "
+            f"lex={composite.lexical_coverage:.3f}, "
+            f"req={composite.required_coverage:.3f}, "
+            f"contra={composite.contradiction}]"
+        )
+        if not fidelity_ok:
+            print(f"  candidate={generated.text}")
+            print(f"  reason={reason}")
+
+    summary = append_preservation_audit(
+        Path(args.batch_preservation_audit),
+        batch_fingerprints=batch_fingerprints,
+        probes=probes,
+    )
+    print(
+        f"[batch preservation gate: "
+        f"protected={summary.protected}, "
+        f"passed={summary.passed}, "
+        f"failed={summary.failed}, "
+        f"status={'PASS' if summary.ok else 'FAIL'}]"
+    )
+    return summary.ok, summary.passed, summary.failed
 
 
 def checkpoint_trained_fingerprints(
@@ -3766,6 +3872,17 @@ def main() -> None:
                 print()
                 continue
 
+            protected_records = protected_internalized_records(
+                learning_log,
+                set(checkpoint_trained_fingerprints(checkpoint)),
+                set(plan.fingerprints),
+            )
+            print(
+                f"[batch preservation baseline: "
+                f"protected={len(protected_records)}, "
+                f"repair_targets={plan.count}]"
+            )
+
             reactivated_count = 0
             already_pending_count = 0
             for row in plan.tasks:
@@ -3826,11 +3943,27 @@ def main() -> None:
                     f"{len(semantic_config.checkpoint_fingerprints or ())} "
                     "fingerprint(s)]"
                 )
+                preservation_ok, preservation_passed, preservation_failed = (
+                    run_batch_preservation_gate(
+                        model=model,
+                        tokenizer=tokenizer,
+                        protected_records=protected_records,
+                        args=args,
+                        batch_fingerprints=plan.fingerprints,
+                    )
+                )
                 print(
                     f"[verification batch trained: "
                     f"{plan.count} task(s); "
+                    f"preservation={'PASS' if preservation_ok else 'FAIL'}; "
                     "re-query each concept to resolve verification]"
                 )
+                if not preservation_ok:
+                    print(
+                        "[batch preservation warning: one or more protected "
+                        "internalized concepts regressed; batch is not "
+                        "considered fully successful]"
+                    )
                 for concept in plan.concepts:
                     print(f"  -> {concept}")
                 load_concept_calibration(
