@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.14.1 Multi-Probe Two-Pass Function Resolver Evaluation."""
+"""LLM_TRY v10.12.16 Subject-Keyed Corpus Memory Function Resolver Evaluation."""
 
 from __future__ import annotations
 
@@ -31,7 +31,8 @@ def parse_args():
     p.add_argument("--tokenizer", default="model/tokenizer-v0.7-bpe.json")
     p.add_argument("--seen", default="data/nagato_corpus_semantic_holdout_seen_v101212.jsonl")
     p.add_argument("--unseen", default="data/nagato_corpus_semantic_holdout_unseen_v101212.jsonl")
-    p.add_argument("--report", default="results/two_pass_function_v1012141.json")
+    p.add_argument("--report", default="results/two_pass_function_v101216.json")
+    p.add_argument("--corpus-memory", default="data/subject_keyed_corpus_memory_v101216.jsonl")
     p.add_argument("--min-two-pass-gain", type=float, default=0.005)
     p.add_argument("--min-structured-slot-rate", type=float, default=0.50)
     return p.parse_args()
@@ -95,7 +96,7 @@ def main():
         raise RuntimeError("No function HOLDOUT rows found")
 
     print("=" * 116)
-    print(" LLM_TRY v10.12.14.1 Multi-Probe Two-Pass Function Resolver Evaluation")
+    print(" LLM_TRY v10.12.16 Subject-Keyed Corpus Memory Function Resolver Evaluation")
     print("=" * 116)
     print("Device                  :", device)
     if device.type == "cuda":
@@ -131,6 +132,7 @@ def main():
             item.subject,
             generate=generate,
             malformed=malformed_or_unstable,
+            corpus_memory=args.corpus_memory,
         )
         resolved_score = score(
             model, tokenizer, resolved.answer, item.answer, item.subject
@@ -148,6 +150,7 @@ def main():
             f"action={resolved.structure.action} "
             f"target={resolved.structure.target} "
             f"purpose={resolved.structure.purpose} "
+            f"memory_hit={resolved.memory_hit} "
             f"fallback={resolved.used_fallback}"
         )
 
@@ -162,6 +165,8 @@ def main():
             "evidence": resolved.evidence,
             "answer": resolved.answer,
             "used_fallback": resolved.used_fallback,
+            "memory_hit": resolved.memory_hit,
+            "memory_evidence": resolved.memory_evidence,
         })
 
     mean_gain = sum(x["gain"] for x in results) / len(results)
@@ -169,12 +174,14 @@ def main():
     same = sum(1 for x in results if abs(x["gain"]) <= 1e-6)
     regressed = sum(1 for x in results if x["gain"] < -1e-6)
     slot_rate = informative / len(results)
+    memory_hit_rate = sum(1 for x in results if x["memory_hit"]) / len(results)
 
     gain_ok = (
         mean_gain >= args.min_two_pass_gain
         and improved > regressed
     )
     slot_ok = slot_rate >= args.min_structured_slot_rate
+    memory_ok = memory_hit_rate >= 1.0
 
     # Structural guard: non-function relations must never route into this
     # resolver. This guarantees no behavior change for those routes.
@@ -189,17 +196,18 @@ def main():
     print(f"Mean two-pass gain       : {mean_gain:+.3f} => {'PASS' if gain_ok else 'FAIL'}")
     print(f"Outcomes                 : improved={improved} same={same} regressed={regressed}")
     print(f"Informative slot rate    : {slot_rate:.2%} => {'PASS' if slot_ok else 'FAIL'}")
+    print(f"Corpus memory hit rate   : {memory_hit_rate:.2%} => {'PASS' if memory_ok else 'FAIL'}")
     print("Non-function route guard :", "PASS" if nonfunction_route_ok else "FAIL")
     print("Weight update            : NONE")
     print("Teacher leakage          : NONE")
 
-    final = gain_ok and slot_ok and nonfunction_route_ok
+    final = gain_ok and slot_ok and memory_ok and nonfunction_route_ok
     print("STATUS                   :", "PASS" if final else "FAIL")
 
     Path(args.report).parent.mkdir(parents=True, exist_ok=True)
     Path(args.report).write_text(
         json.dumps({
-            "version": "v10.12.14.1",
+            "version": "v10.12.16",
             "model": args.model,
             "function_results": results,
             "mean_two_pass_gain": mean_gain,
@@ -207,8 +215,10 @@ def main():
             "same": same,
             "regressed": regressed,
             "informative_slot_rate": slot_rate,
+            "corpus_memory_hit_rate": memory_hit_rate,
             "gain_passed": gain_ok,
             "slot_passed": slot_ok,
+            "memory_passed": memory_ok,
             "nonfunction_route_guard_passed": nonfunction_route_ok,
             "weight_update": False,
             "teacher_leakage": False,
