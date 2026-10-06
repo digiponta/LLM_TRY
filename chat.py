@@ -19,14 +19,16 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import json
 import hashlib
 import re
+import shutil
 import subprocess
 import sys
 import time
+import unicodedata
 from typing import List, Tuple
 
 import torch
@@ -35,6 +37,89 @@ import torch.nn.functional as F
 
 from model import LanguageModel
 from tokenizer_bpe import Tokenizer
+from semantic_proposition_v1090 import (
+    add_statement as add_semantic_proposition_statement,
+    compose_subject as compose_semantic_proposition_subject,
+    load_propositions as load_semantic_propositions,
+)
+from unified_semantic_bridge_v1090 import (
+    sync_all_propositions,
+    sync_subject_from_propositions,
+)
+from subject_keyed_proposition_v1090 import (
+    compose_subject_from_index,
+    load_subject_index,
+    subject_index_dict,
+    subject_mapping,
+    sync_subject_index,
+)
+from typed_subject_proposition_v10100 import (
+    load_typed_index,
+    sync_typed_index,
+    typed_index_dict,
+    typed_query_lookup,
+    typed_subject_mapping,
+    typed_subject_rows,
+)
+from internalized_knowledge_v10100 import (
+    internalized_record_for_focus,
+    load_internalized_concepts,
+    load_internalized_records,
+)
+from knowledge_state_resolver_v10100 import (
+    resolve_knowledge_state,
+)
+from knowledge_state_dispatcher_v10101 import (
+    dispatch_knowledge_state,
+)
+from truth_state_v10103 import (
+    TRUTH_STATES,
+    effective_truth_record,
+    load_truth_records,
+    upsert_truth_record,
+)
+from truth_aware_dispatch_v10103 import (
+    apply_truth_policy,
+)
+from semantic_knowledge_architecture_v10110 import (
+    SemanticKnowledgeArchitecture,
+    SemanticKnowledgeConfig,
+)
+from semantic_knowledge_snapshot_v10111 import (
+    snapshot_semantic_knowledge,
+)
+from knowledge_promotion_v10114 import (
+    pending_knowledge_requests,
+    promote_knowledge,
+)
+from candidate_repair_quality_v10123 import (
+    RepairQualityProbe,
+    append_repair_quality_audit,
+)
+from batch_repair_preservation_v10121 import (
+    PreservationProbe,
+    append_preservation_audit,
+    protected_internalized_records,
+)
+from internalized_verification_v10119 import (
+    active_verifications,
+    batch_repair_plan,
+    mark_batch_retrain,
+    mark_retrain as mark_internalized_verification_retrain,
+    mark_verified as mark_internalized_verification_verified,
+    upsert_unstable as upsert_internalized_unstable,
+    verification_summary,
+)
+from knowledge_queue_lifecycle_v10115 import (
+    consolidate_legacy_resolved,
+    lifecycle_summary,
+    mark_concept_verified,
+    revoke_concept_verification,
+)
+from retrieval_first_runtime_v1012161 import (
+    resolve_subject as retrieval_first_resolve_subject,
+    truth_allows_direct_retrieval,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -48,6 +133,22 @@ DEFAULT_KNOWLEDGE_QUEUE = "data/knowledge_queue.jsonl"
 DEFAULT_GATE_REVIEW_QUEUE = "data/gate_review_queue.jsonl"
 DEFAULT_ONLINE_MODEL = "model/model-gpu-v1.6.2-online.pt"
 DEFAULT_ONLINE_TRAINER = "online_train.py"
+DEFAULT_RAW_KNOWLEDGE_CORPUS = "data/data-nagato.txt"
+DEFAULT_SEMANTIC_KNOWLEDGE = "data/unified_semantic_memory_v1090.jsonl"
+DEFAULT_PROPOSITION_STORE = "data/semantic_propositions_v1090.jsonl"
+DEFAULT_SUBJECT_INDEX = "data/subject_keyed_propositions_v1090.jsonl"
+DEFAULT_TYPED_SUBJECT_INDEX = "data/typed_subject_propositions_v10100.jsonl"
+DEFAULT_CORPUS_MEMORY = "data/subject_keyed_corpus_memory_v101216.jsonl"
+DEFAULT_TRUTH_STORE = "data/truth_state_v10103.jsonl"
+DEFAULT_INTERNALIZED_VERIFICATION = (
+    "data/internalized_verification_v10119.jsonl"
+)
+DEFAULT_BATCH_PRESERVATION_AUDIT = (
+    "data/batch_preservation_v10121.jsonl"
+)
+DEFAULT_CANDIDATE_REPAIR_QUALITY_AUDIT = (
+    "data/candidate_repair_quality_v10123.jsonl"
+)
 
 USER_PREFIX = "人: "
 AI_PREFIX = "AI: "
@@ -89,6 +190,24 @@ class GenerationResult:
     mean_top2_margin: float
 
 
+@dataclass(frozen=True)
+class CompositeFidelityResult:
+    semantic_similarity: float
+    lexical_coverage: float
+    required_coverage: float
+    contradiction: bool
+    required_terms: tuple[str, ...] = ()
+    matched_terms: tuple[str, ...] = ()
+
+    @property
+    def missing_terms(self) -> tuple[str, ...]:
+        matched = set(self.matched_terms)
+        return tuple(
+            term for term in self.required_terms
+            if term not in matched
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Chat with the current LLM_GPU conversational model."
@@ -112,6 +231,62 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--teaching-queue", default=DEFAULT_TEACHING_QUEUE)
     parser.add_argument("--knowledge-queue", default=DEFAULT_KNOWLEDGE_QUEUE)
     parser.add_argument("--gate-review-queue", default=DEFAULT_GATE_REVIEW_QUEUE)
+    parser.add_argument(
+        "--propositions",
+        default=DEFAULT_PROPOSITION_STORE,
+        help="Persistent atomic semantic proposition store.",
+    )
+    parser.add_argument(
+        "--subject-index",
+        default=DEFAULT_SUBJECT_INDEX,
+        help="Derived subject-keyed semantic proposition index.",
+    )
+    parser.add_argument(
+        "--typed-subject-index",
+        default=DEFAULT_TYPED_SUBJECT_INDEX,
+        help="Derived Subject => Predicate Type => Statement index.",
+    )
+    parser.add_argument(
+        "--corpus-memory",
+        default=DEFAULT_CORPUS_MEMORY,
+        help="v10.12.16 subject-keyed corpus memory used by retrieval-first runtime.",
+    )
+    parser.add_argument(
+        "--truth-store",
+        default=DEFAULT_TRUTH_STORE,
+        help="Persistent concept truth-state overlay.",
+    )
+    parser.add_argument(
+        "--internalized-verification",
+        default=DEFAULT_INTERNALIZED_VERIFICATION,
+        help="Persistent INTERNALIZED_UNSTABLE verification loop store.",
+    )
+    parser.add_argument(
+        "--batch-preservation-audit",
+        default=DEFAULT_BATCH_PRESERVATION_AUDIT,
+        help="Persistent v10.12.1 batch preservation audit log.",
+    )
+    parser.add_argument(
+        "--batch-preservation-force-fail",
+        action="store_true",
+        help=(
+            "TEST ONLY: force candidate rollback after preservation "
+            "evaluation to validate v10.12.2 rollback behavior."
+        ),
+    )
+    parser.add_argument(
+        "--candidate-repair-quality-audit",
+        default=DEFAULT_CANDIDATE_REPAIR_QUALITY_AUDIT,
+        help="Persistent v10.12.3 candidate repair-quality audit log.",
+    )
+    parser.add_argument(
+        "--candidate-repair-force-fail",
+        action="store_true",
+        help=(
+            "TEST ONLY: force Repair Quality Gate FAIL after evaluation "
+            "to validate v10.12.3 rollback behavior."
+        ),
+    )
     parser.add_argument(
         "--learn",
         action=argparse.BooleanOptionalAction,
@@ -181,6 +356,24 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.82,
         help="Minimum mean cosine similarity between probe response vectors.",
+    )
+    parser.add_argument(
+        "--min-internalized-fidelity",
+        type=float,
+        default=0.90,
+        help="Minimum teacher semantic similarity for INTERNALIZED output.",
+    )
+    parser.add_argument(
+        "--min-internalized-lexical-coverage",
+        type=float,
+        default=0.45,
+        help="Minimum teacher character-bigram coverage.",
+    )
+    parser.add_argument(
+        "--min-internalized-required-coverage",
+        type=float,
+        default=0.50,
+        help="Minimum required-content term coverage.",
     )
     parser.add_argument(
         "--semantic-consistency",
@@ -292,6 +485,44 @@ def mark_pair_for_retraining(
         encoding="utf-8",
     )
     return True
+
+
+def active_internalized_verification_record(
+    verification_path: Path,
+    learning_log: Path,
+    learning_state: Path,
+    focus: str,
+):
+    """Return CURRENT internalized record for an active repair task.
+
+    This is used only for post-training verification. It lets a repaired
+    INTERNALIZED concept be tested against model weights even when a higher-
+    priority TYPED/UNIFIED retrieval source exists.
+    """
+    target = str(focus).strip().lower()
+    if not target:
+        return None
+
+    rows = active_verifications(verification_path)
+    active_fingerprints = {
+        str(row.get("fingerprint", ""))
+        for row in rows
+        if str(row.get("concept", "")).strip().lower() == target
+    }
+    if not active_fingerprints:
+        return None
+
+    records = load_internalized_records(
+        learning_log,
+        learning_state,
+    )
+    for record in reversed(records):
+        if (
+            record.concept.strip().lower() == target
+            and record.fingerprint in active_fingerprints
+        ):
+            return record
+    return None
 
 
 def choose_startup_model(
@@ -741,10 +972,22 @@ def resolve_teaching_queue(
 def run_online_training(
     args: argparse.Namespace,
     model_path: Path,
+    *,
+    output_path: Path | None = None,
+    state_path: Path | None = None,
 ) -> Path | None:
     trainer = Path(args.online_trainer)
     learning_log = Path(args.learning_log)
-    output = Path(args.online_output)
+    output = (
+        Path(output_path)
+        if output_path is not None
+        else Path(args.online_output)
+    )
+    training_state = (
+        Path(state_path)
+        if state_path is not None
+        else Path(args.learning_state)
+    )
 
     if not trainer.exists():
         print(f"[online trainer not found: {trainer}]")
@@ -760,7 +1003,7 @@ def run_online_training(
         "--base-model", str(model_path),
         "--tokenizer", str(resolve_runtime_path(args.tokenizer)),
         "--output", str(output),
-        "--state", str(args.learning_state),
+        "--state", str(training_state),
     ]
     print("[starting incremental training]")
     print(" ".join(cmd))
@@ -775,6 +1018,83 @@ def run_online_training(
         print(f"[training finished but checkpoint not found: {output}]")
         return None
     return output
+
+def batch_candidate_paths(
+    output_path: Path,
+    state_path: Path,
+) -> tuple[Path, Path]:
+    candidate_checkpoint = output_path.with_name(
+        output_path.stem + ".candidate" + output_path.suffix
+    )
+    candidate_state = state_path.with_name(
+        state_path.stem + ".candidate" + state_path.suffix
+    )
+    return candidate_checkpoint, candidate_state
+
+
+def discard_batch_candidate(
+    candidate_checkpoint: Path,
+    candidate_state: Path,
+) -> None:
+    for path in (candidate_checkpoint, candidate_state):
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError as exc:
+            print(f"[candidate cleanup warning: {path}: {exc}]")
+
+
+def promote_batch_candidate(
+    candidate_checkpoint: Path,
+    candidate_state: Path,
+    production_checkpoint: Path,
+    production_state: Path,
+) -> None:
+    """Promote checkpoint/state together with rollback on partial failure."""
+    production_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    production_state.parent.mkdir(parents=True, exist_ok=True)
+
+    checkpoint_backup = production_checkpoint.with_name(
+        production_checkpoint.name + ".promotion-backup"
+    )
+    state_backup = production_state.with_name(
+        production_state.name + ".promotion-backup"
+    )
+    for backup in (checkpoint_backup, state_backup):
+        if backup.exists():
+            backup.unlink()
+
+    checkpoint_had_original = production_checkpoint.exists()
+    state_had_original = production_state.exists()
+
+    if checkpoint_had_original:
+        shutil.copy2(production_checkpoint, checkpoint_backup)
+    if state_had_original:
+        shutil.copy2(production_state, state_backup)
+
+    try:
+        candidate_checkpoint.replace(production_checkpoint)
+        candidate_state.replace(production_state)
+    except Exception:
+        # Restore both production files to the exact pre-promotion pair.
+        if checkpoint_had_original and checkpoint_backup.exists():
+            shutil.copy2(checkpoint_backup, production_checkpoint)
+        elif not checkpoint_had_original and production_checkpoint.exists():
+            production_checkpoint.unlink()
+
+        if state_had_original and state_backup.exists():
+            shutil.copy2(state_backup, production_state)
+        elif not state_had_original and production_state.exists():
+            production_state.unlink()
+        raise
+    finally:
+        for backup in (checkpoint_backup, state_backup):
+            try:
+                if backup.exists():
+                    backup.unlink()
+            except OSError:
+                pass
+
 
 def _slot_overlap(a: list[str], b: list[str]) -> bool:
     aa = {x.lower() for x in a}
@@ -823,6 +1143,21 @@ def select_relevant_history(
         return [best]
 
     return []
+
+
+IDENTITY_QUERY_ALIASES = {
+    "貴方は": "あなたは誰ですか",
+    "あなたは": "あなたは誰ですか",
+    "長門": "あなたは誰ですか",
+    "長門有希": "あなたは誰ですか",
+    "長門とは": "あなたは誰ですか",
+    "長門有希とは": "あなたは誰ですか",
+}
+
+
+def normalize_identity_query(question: str) -> str:
+    """Map short identity variants to the stable canonical identity prompt."""
+    return IDENTITY_QUERY_ALIASES.get(question.strip(), question)
 
 
 def build_prompt(
@@ -1067,6 +1402,213 @@ def mean_pairwise_semantic_agreement(
         for j in range(i + 1, len(vectors)):
             values.append(float(torch.dot(vectors[i], vectors[j]).item()))
     return sum(values) / len(values) if values else 1.0
+
+
+@torch.no_grad()
+def internalized_teacher_fidelity(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    generated_answer: str,
+    teacher_answer: str,
+) -> float:
+    if not generated_answer.strip() or not teacher_answer.strip():
+        return 0.0
+    generated_vector = semantic_vector(
+        model,
+        tokenizer,
+        generated_answer,
+    )
+    teacher_vector = semantic_vector(
+        model,
+        tokenizer,
+        teacher_answer,
+    )
+    return float(torch.dot(generated_vector, teacher_vector).item())
+
+
+def _teacher_lexical_coverage(
+    generated_answer: str,
+    teacher_answer: str,
+) -> float:
+    teacher = _char_ngrams(teacher_answer, n=2)
+    generated = _char_ngrams(generated_answer, n=2)
+    if not teacher:
+        return 0.0
+    return len(teacher & generated) / len(teacher)
+
+
+def _required_teacher_terms(
+    teacher_answer: str,
+    concept: str = "",
+) -> tuple[str, ...]:
+    text = _normalize_for_similarity(teacher_answer)
+    concept_norm = _normalize_for_similarity(concept)
+    if concept_norm and text.startswith(concept_norm):
+        text = text[len(concept_norm):]
+    text = re.sub(r"^(?:は|とは)", "", text)
+    text = re.sub(r"(?:である|です|だ)$", "", text)
+
+    parts = re.split(
+        r"(?:を|に|で|が|は|と|して|する|行う|利用|ため|の)",
+        text,
+    )
+    stop = {
+        "もの", "こと", "ため", "これ", "それ",
+        "ある", "いる", "なる", "できる",
+    }
+    terms: list[str] = []
+    for part in parts:
+        term = part.strip()
+        if len(term) < 2 or term in stop:
+            continue
+        if term not in terms:
+            terms.append(term)
+
+    # Preserve the terminal category noun when it is informative.
+    category_match = re.search(
+        r"([一-龯々ァ-ヶーA-Za-z0-9]{2,12})(?:である|です|だ)$",
+        teacher_answer.strip(),
+    )
+    if category_match:
+        category = category_match.group(1)
+        if (
+            category != concept
+            and category not in terms
+            and len(category) >= 2
+        ):
+            terms.append(category)
+
+    return tuple(terms[:8])
+
+
+def _required_content_coverage(
+    generated_answer: str,
+    teacher_answer: str,
+    concept: str = "",
+) -> tuple[float, tuple[str, ...], tuple[str, ...]]:
+    required = _required_teacher_terms(
+        teacher_answer,
+        concept=concept,
+    )
+    if not required:
+        return 1.0, (), ()
+    generated_norm = _normalize_for_similarity(generated_answer)
+    matched = tuple(
+        term for term in required
+        if _normalize_for_similarity(term) in generated_norm
+    )
+    return len(matched) / len(required), required, matched
+
+
+def _polarity_contradiction(
+    generated_answer: str,
+    teacher_answer: str,
+) -> bool:
+    negative_patterns = (
+        r"ではない", r"でない", r"しない", r"できない",
+        r"行わない", r"利用しない", r"不可能", r"存在しない",
+    )
+    teacher_negative = any(
+        re.search(pattern, teacher_answer)
+        for pattern in negative_patterns
+    )
+    generated_negative = any(
+        re.search(pattern, generated_answer)
+        for pattern in negative_patterns
+    )
+    return teacher_negative != generated_negative
+
+
+@torch.no_grad()
+def composite_internalized_teacher_fidelity(
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    generated_answer: str,
+    teacher_answer: str,
+    concept: str = "",
+) -> CompositeFidelityResult:
+    semantic = internalized_teacher_fidelity(
+        model=model,
+        tokenizer=tokenizer,
+        generated_answer=generated_answer,
+        teacher_answer=teacher_answer,
+    )
+    lexical = _teacher_lexical_coverage(
+        generated_answer,
+        teacher_answer,
+    )
+    required_coverage, required, matched = (
+        _required_content_coverage(
+            generated_answer,
+            teacher_answer,
+            concept=concept,
+        )
+    )
+    contradiction = _polarity_contradiction(
+        generated_answer,
+        teacher_answer,
+    )
+    return CompositeFidelityResult(
+        semantic_similarity=semantic,
+        lexical_coverage=lexical,
+        required_coverage=required_coverage,
+        contradiction=contradiction,
+        required_terms=required,
+        matched_terms=matched,
+    )
+
+
+def apply_internalized_fidelity_policy(
+    accepted: bool,
+    fidelity: float,
+    threshold: float,
+) -> tuple[bool, str]:
+    """Backward-compatible v10.11.7 single-score fidelity policy."""
+    if not accepted:
+        return False, ""
+    if fidelity < threshold:
+        return (
+            False,
+            (
+                "internalized teacher fidelity "
+                f"{fidelity:.3f} < {threshold:.3f}"
+            ),
+        )
+    return True, "internalized teacher fidelity passed"
+
+
+def apply_composite_internalized_fidelity_policy(
+    accepted: bool,
+    result: CompositeFidelityResult,
+    *,
+    semantic_threshold: float,
+    lexical_threshold: float,
+    required_threshold: float,
+) -> tuple[bool, str]:
+    failures: list[str] = []
+    if result.semantic_similarity < semantic_threshold:
+        failures.append(
+            "semantic "
+            f"{result.semantic_similarity:.3f} < {semantic_threshold:.3f}"
+        )
+    if result.lexical_coverage < lexical_threshold:
+        failures.append(
+            "lexical "
+            f"{result.lexical_coverage:.3f} < {lexical_threshold:.3f}"
+        )
+    if result.required_coverage < required_threshold:
+        failures.append(
+            "required "
+            f"{result.required_coverage:.3f} < {required_threshold:.3f}"
+        )
+    if result.contradiction:
+        failures.append("contradiction detected")
+
+    if failures:
+        return False, "composite teacher fidelity: " + "; ".join(failures)
+    if not accepted:
+        return False, ""
+    return True, "composite teacher fidelity passed"
 
 
 SLOT_ALIASES = {
@@ -1377,6 +1919,19 @@ def extract_definition_focus(text: str) -> str | None:
 
 
 
+RUNTIME_TRAILING_PUNCTUATION = "、，,。．.!！?？:：;；"
+
+
+def normalize_runtime_input(text: str) -> str:
+    """Normalize harmless surface punctuation before runtime routing.
+
+    This deliberately removes only sentence-final punctuation and applies NFKC.
+    Semantic content and internal punctuation are preserved.
+    """
+    normalized = unicodedata.normalize("NFKC", text).strip()
+    return normalized.rstrip(RUNTIME_TRAILING_PUNCTUATION).strip()
+
+
 def input_quality_check(text: str) -> tuple[bool, str]:
     q = text.strip()
     if not q:
@@ -1668,6 +2223,27 @@ def answer_concept_consistency(
 
     return True, "answer concept consistent"
 
+CANONICAL_DEFINITIONS = {
+    "cpu": "CPUは、命令を解釈して演算や制御を実行する中央処理装置である。",
+    "gpu": "GPUは、多数の演算を並列に実行することを得意とする処理装置である。",
+    "cuda": "CUDAは、NVIDIAのGPUを汎用計算に利用するための並列計算基盤である。",
+}
+
+
+def canonical_definition_lookup(question: str) -> tuple[str, str] | None:
+    """Return a stable canonical definition for explicitly validated concepts."""
+    focus = extract_concept_query_focus(question)
+    if not focus:
+        focus = extract_bare_concept_focus(question)
+    if not focus:
+        return None
+
+    answer = CANONICAL_DEFINITIONS.get(focus.lower())
+    if not answer:
+        return None
+    return focus, answer
+
+
 KNOWN_QUERY_CONCEPTS = {
     "ai", "人工知能",
     "llm", "大規模言語モデル",
@@ -1675,6 +2251,8 @@ KNOWN_QUERY_CONCEPTS = {
     "コンピュータ",
     "量子力学", "量子コンピュータ",
     "semantic", "セマンティック", "セマンティックデータ",
+    # Persona/identity concepts that are explicitly trained in the Nagato SFT.
+    "長門", "長門有希",
 }
 
 
@@ -1703,6 +2281,32 @@ def extract_bare_concept_focus(question: str) -> str:
     return ""
 
 
+BARE_DEFINITION_CONCEPTS = {
+    "ai", "人工知能",
+    "llm", "大規模言語モデル",
+    "cpu", "gpu", "cuda",
+    "コンピュータ",
+    "量子力学", "量子コンピュータ",
+    "semantic", "セマンティック", "セマンティックデータ",
+}
+
+
+def canonicalize_bare_known_query(question: str) -> str:
+    """Turn a validated bare knowledge concept into an explicit definition query.
+
+    Example: "CPU" -> "CPUとは".
+
+    Persona nouns such as "長門" are intentionally excluded; this helper is
+    only for concepts whose bare form semantically means "tell me what X is".
+    """
+    focus = extract_bare_concept_focus(question)
+    if not focus:
+        return question
+    if focus.lower() not in BARE_DEFINITION_CONCEPTS:
+        return question
+    return f"{focus}とは"
+
+
 def extract_concept_query_focus(question: str) -> str:
     """Extract a concept from the explicit query forms used by the pre-gate."""
     q = question.strip()
@@ -1721,6 +2325,87 @@ def extract_concept_query_focus(question: str) -> str:
     return ""
 
 
+def raw_corpus_knows_focus(
+    focus: str,
+    corpus_path: str | Path = DEFAULT_RAW_KNOWLEDGE_CORPUS,
+    min_occurrences: int = 2,
+) -> bool:
+    """Return True when a concept is materially present in the local raw corpus.
+
+    This only relaxes the *pre-generation* lexical gate.  The generated answer
+    must still pass the normal confidence/semantic gate.
+    """
+    path = resolve_runtime_path(corpus_path)
+    if not path.exists() or not focus:
+        return False
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return text.count(focus) >= max(1, min_occurrences)
+
+
+def semantic_proposition_lookup(
+    question: str,
+    proposition_path: str | Path = DEFAULT_PROPOSITION_STORE,
+) -> tuple[str, str] | None:
+    """Return a composed answer from atomic propositions for concept queries."""
+    focus = extract_concept_query_focus(question)
+    if not focus:
+        focus = extract_bare_concept_focus(question)
+    if not focus:
+        return None
+
+    path = resolve_runtime_path(proposition_path)
+    if not path.exists():
+        return None
+
+    answer = compose_semantic_proposition_subject(path, focus)
+    if not answer:
+        return None
+    return focus, answer
+
+
+def semantic_knowledge_lookup(
+    question: str,
+    knowledge_path: str | Path = DEFAULT_SEMANTIC_KNOWLEDGE,
+) -> tuple[str, str] | None:
+    """Look up a merged semantic answer for an explicit concept query.
+
+    Returns (concept, answer) when the concept is present in the semantic
+    proposition knowledge file.  This is retrieval, not generation.
+    """
+    focus = extract_concept_query_focus(question)
+    if not focus:
+        focus = extract_bare_concept_focus(question)
+    if not focus:
+        return None
+
+    path = resolve_runtime_path(knowledge_path)
+    if not path.exists():
+        return None
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    for raw in lines:
+        if not raw.strip():
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+
+        concept = str(row.get("concept", "")).strip()
+        answer = str(row.get("assistant", "")).strip()
+        if concept == focus and answer:
+            return concept, answer
+
+    return None
+
+
 def pre_generation_unknown_concept(
     question: str,
     promoted_concepts: set[str] | None = None,
@@ -1732,16 +2417,42 @@ def pre_generation_unknown_concept(
     triggers on explicit concept-query forms so ordinary persona/chat prompts
     such as '本は好きですか' are unaffected.
     """
-    focus = extract_concept_query_focus(question)
+    explicit_focus = extract_concept_query_focus(question)
+    bare_focus = ""
+    focus = explicit_focus
     if not focus:
-        focus = extract_bare_concept_focus(question)
+        bare_focus = extract_bare_concept_focus(question)
+        focus = bare_focus
     if not focus:
         return False, ""
 
     norm = focus.lower()
+
+    # Pronouns / conversational identity prompts are not knowledge concepts.
+    # They must reach the normal persona/chat path instead of being rejected
+    # by the lexical concept pre-gate.
+    NON_CONCEPT_FOCI = {
+        "あなた", "貴方", "きみ", "君", "おまえ", "お前",
+        "わたし", "私", "ぼく", "僕",
+    }
+    if focus in NON_CONCEPT_FOCI:
+        return False, focus
+
     if norm in KNOWN_QUERY_CONCEPTS:
         return False, focus
     if promoted_concepts and norm in promoted_concepts:
+        return False, focus
+
+    # v10.9.0 semantic integration: a bare noun such as "時間" must not
+    # become KNOWN merely because the raw corpus contains the token.  Bare
+    # concept queries require validated/promoted knowledge or a retrieval hit
+    # handled before this gate.  This prevents corpus-frequency hallucination.
+    if bare_focus:
+        return True, focus
+
+    # Preserve the legacy raw-corpus relaxation only for explicit concept
+    # queries such as "Xとは".  Generated answers still pass downstream gates.
+    if raw_corpus_knows_focus(focus):
         return False, focus
     return True, focus
 
@@ -2083,7 +2794,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.5 Bare Concept Gate")
+    print(" LLM_TRY Chat - v10.13.0 Semantic Knowledge Runtime Stable")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2106,11 +2817,24 @@ def print_info(
         print("Min mean margin :", args.min_mean_margin)
         print("Min agreement   :", args.min_agreement)
         print("Min sem agree   :", args.min_semantic_agreement)
+        print("Min int semantic:", args.min_internalized_fidelity)
+        print(
+            "Min int lexical :",
+            args.min_internalized_lexical_coverage,
+        )
+        print(
+            "Min int required:",
+            args.min_internalized_required_coverage,
+        )
         print("Fallback        :", UNKNOWN_REPLY)
         print("Context policy  : minimal")
         print("Teaching queue  :", args.teaching_queue)
         print("Knowledge queue :", args.knowledge_queue)
         print("Gate review q   :", args.gate_review_queue)
+        print("Proposition db  :", args.propositions)
+        print("Subject index   :", args.subject_index)
+        print("Typed index     :", args.typed_subject_index)
+        print("Corpus memory   :", args.corpus_memory)
         print(
             "Concept calib   :",
             CALIBRATION_INFO.get("version", "raw fallback")
@@ -2120,7 +2844,219 @@ def print_info(
         if CALIBRATION_INFO.get("loaded"):
             print("Centroid source : TRAIN ONLY")
             print("Holdout in fit  :", CALIBRATION_INFO.get("holdout_used_for_centroid"))
+    metadata = checkpoint.get("metadata", {})
+    if isinstance(metadata, dict):
+        bound = metadata.get("trained_fingerprints", [])
+        binding_version = metadata.get("knowledge_binding_version", "")
+        print(
+            "Checkpoint bind :",
+            f"{len(bound) if isinstance(bound, list) else 0} fingerprint(s)",
+        )
+        if binding_version:
+            print("Binding version :", binding_version)
     print()
+
+
+def run_candidate_repair_quality_gate(
+    *,
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    plan,
+    args: argparse.Namespace,
+) -> tuple[bool, int, int]:
+    probes: list[RepairQualityProbe] = []
+
+    for row in plan.tasks:
+        concept = str(row.get("concept", "")).strip()
+        question = str(row.get("question", "")).strip()
+        teacher = str(row.get("teacher_answer", "")).strip()
+        fingerprint = str(row.get("fingerprint", "")).strip()
+
+        prompt, _ = build_prompt(
+            history=[],
+            user_text=question,
+            history_turns=0,
+        )
+        generated = generate_reply(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            max_new_tokens=args.max_new_tokens,
+            temperature=0.0,
+            top_k=args.top_k,
+            repetition_penalty=args.repetition_penalty,
+            seed=0,
+        )
+        malformed = malformed_or_unstable(generated.text)
+        composite = composite_internalized_teacher_fidelity(
+            model=model,
+            tokenizer=tokenizer,
+            generated_answer=generated.text,
+            teacher_answer=teacher,
+            concept=concept,
+        )
+        fidelity_ok, fidelity_reason = (
+            apply_composite_internalized_fidelity_policy(
+                accepted=not malformed,
+                result=composite,
+                semantic_threshold=args.min_internalized_fidelity,
+                lexical_threshold=args.min_internalized_lexical_coverage,
+                required_threshold=args.min_internalized_required_coverage,
+            )
+        )
+        reason = (
+            fidelity_reason
+            if fidelity_reason
+            else (
+                "malformed/repetitive output"
+                if malformed
+                else "repair quality gate rejected"
+            )
+        )
+        probes.append(
+            RepairQualityProbe(
+                concept=concept,
+                question=question,
+                teacher_answer=teacher,
+                fingerprint=fingerprint,
+                generated_answer=generated.text,
+                semantic=composite.semantic_similarity,
+                lexical=composite.lexical_coverage,
+                required=composite.required_coverage,
+                contradiction=composite.contradiction,
+                passed=fidelity_ok,
+                reason=reason,
+            )
+        )
+        print(
+            f"[repair quality {'PASS' if fidelity_ok else 'FAIL'}: "
+            f"concept={concept!r}, "
+            f"sem={composite.semantic_similarity:.3f}, "
+            f"lex={composite.lexical_coverage:.3f}, "
+            f"req={composite.required_coverage:.3f}, "
+            f"contra={composite.contradiction}]"
+        )
+        if not fidelity_ok:
+            print(f"  candidate={generated.text}")
+            print(f"  reason={reason}")
+
+    summary = append_repair_quality_audit(
+        Path(args.candidate_repair_quality_audit),
+        probes=probes,
+    )
+    print(
+        f"[candidate repair quality gate: "
+        f"targets={summary.targets}, "
+        f"passed={summary.passed}, "
+        f"failed={summary.failed}, "
+        f"status={'PASS' if summary.ok else 'FAIL'}]"
+    )
+    return summary.ok, summary.passed, summary.failed
+
+
+def run_batch_preservation_gate(
+    *,
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    protected_records,
+    args: argparse.Namespace,
+    batch_fingerprints: tuple[str, ...],
+) -> tuple[bool, int, int]:
+    probes: list[PreservationProbe] = []
+
+    for record in protected_records:
+        prompt, _ = build_prompt(
+            history=[],
+            user_text=record.question,
+            history_turns=0,
+        )
+        generated = generate_reply(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            max_new_tokens=args.max_new_tokens,
+            temperature=0.0,
+            top_k=args.top_k,
+            repetition_penalty=args.repetition_penalty,
+            seed=0,
+        )
+        composite = composite_internalized_teacher_fidelity(
+            model=model,
+            tokenizer=tokenizer,
+            generated_answer=generated.text,
+            teacher_answer=record.teacher_answer,
+            concept=record.concept,
+        )
+        fidelity_ok, fidelity_reason = (
+            apply_composite_internalized_fidelity_policy(
+                accepted=not malformed_or_unstable(generated.text),
+                result=composite,
+                semantic_threshold=args.min_internalized_fidelity,
+                lexical_threshold=args.min_internalized_lexical_coverage,
+                required_threshold=args.min_internalized_required_coverage,
+            )
+        )
+        reason = (
+            fidelity_reason
+            if fidelity_reason
+            else (
+                "malformed/repetitive output"
+                if malformed_or_unstable(generated.text)
+                else "preservation gate rejected"
+            )
+        )
+        probes.append(
+            PreservationProbe(
+                concept=record.concept,
+                question=record.question,
+                teacher_answer=record.teacher_answer,
+                fingerprint=record.fingerprint,
+                generated_answer=generated.text,
+                semantic=composite.semantic_similarity,
+                lexical=composite.lexical_coverage,
+                required=composite.required_coverage,
+                contradiction=composite.contradiction,
+                passed=fidelity_ok,
+                reason=reason,
+            )
+        )
+        print(
+            f"[preservation {'PASS' if fidelity_ok else 'FAIL'}: "
+            f"concept={record.concept!r}, "
+            f"sem={composite.semantic_similarity:.3f}, "
+            f"lex={composite.lexical_coverage:.3f}, "
+            f"req={composite.required_coverage:.3f}, "
+            f"contra={composite.contradiction}]"
+        )
+        if not fidelity_ok:
+            print(f"  candidate={generated.text}")
+            print(f"  reason={reason}")
+
+    summary = append_preservation_audit(
+        Path(args.batch_preservation_audit),
+        batch_fingerprints=batch_fingerprints,
+        probes=probes,
+    )
+    print(
+        f"[batch preservation gate: "
+        f"protected={summary.protected}, "
+        f"passed={summary.passed}, "
+        f"failed={summary.failed}, "
+        f"status={'PASS' if summary.ok else 'FAIL'}]"
+    )
+    return summary.ok, summary.passed, summary.failed
+
+
+def checkpoint_trained_fingerprints(
+    checkpoint: dict,
+) -> frozenset[str]:
+    metadata = checkpoint.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return frozenset()
+    values = metadata.get("trained_fingerprints", [])
+    if not isinstance(values, (list, tuple, set)):
+        return frozenset()
+    return frozenset(str(value) for value in values)
 
 
 def main() -> None:
@@ -2187,14 +3123,75 @@ def main() -> None:
     print("  /teachq Q => A teach an explicit question/answer pair")
     print("  /good         approve and save the previous AI answer for learning")
     print("  /train        run incremental training and reload checkpoint")
+    print("  /trainbatch   batch-train all active verification repair tasks")
+    print("  /batchstatus  show verification-aware batch repair plan")
     print("  /maintain     recover the previous question from trusted teaching data")
     print("  /maintain all recover all pending trusted teaching candidates")
+    print("  /propteach S  decompose and persist semantic proposition statement")
+    print("  /prop X       compose stored propositions for subject X")
+    print("  /props        list atomic semantic propositions")
+    print("  /propsync     sync all atomic propositions to unified semantic memory")
+    print("  /subject X    show X => X+predicate mappings")
+    print("  /subjects     list subject-keyed proposition index")
+    print("  /typedsubject X show X => predicate type => statement")
+    print("  /typedsubjects list typed subject proposition index")
+    print("  /internalized list concepts proven consumed by /train")
+    print("  /kstate Q     inspect resolved knowledge state for query Q")
+    print("  /dispatch Q   inspect dispatcher action for query Q")
+    print("  /provenance Q inspect source/origin evidence for query Q")
+    print("  /truth X      inspect effective truth state for concept X")
+    print("  /truths       list explicit truth-state records")
+    print("  /truthset X STATE [=> CORRECTION]")
+    print("  /semstatus    show Semantic Knowledge Architecture status")
+    print("  /semantic X   inspect all semantic knowledge layers for X")
+    print("  /promotions   list pending UNKNOWN_KNOWLEDGE requests")
+    print("  /promotionstatus show pending/promoted/verified lifecycle counts")
+    print("  /verifystatus show internalized verification loop counts")
+    print("  /verifications list active internalized verification tasks")
+    print("  /promote X => STATEMENT  promote pending concept to semantic knowledge")
     print("  /exit         quit")
     print()
 
     history: List[Tuple[str, str]] = []
     learning_log = Path(args.learning_log)
     learning_state = Path(args.learning_state)
+    proposition_path = resolve_runtime_path(args.propositions)
+    unified_semantic_path = resolve_runtime_path(DEFAULT_SEMANTIC_KNOWLEDGE)
+    subject_index_path = resolve_runtime_path(args.subject_index)
+    typed_subject_index_path = resolve_runtime_path(
+        args.typed_subject_index
+    )
+    truth_store_path = resolve_runtime_path(args.truth_store)
+
+    semantic_config = SemanticKnowledgeConfig(
+        proposition_path=proposition_path,
+        subject_index_path=subject_index_path,
+        typed_index_path=typed_subject_index_path,
+        unified_path=unified_semantic_path,
+        learning_log=learning_log,
+        learning_state=learning_state,
+        raw_corpus_path=resolve_runtime_path(
+            DEFAULT_RAW_KNOWLEDGE_CORPUS
+        ),
+        truth_store_path=truth_store_path,
+        canonical_definitions=CANONICAL_DEFINITIONS,
+        checkpoint_fingerprints=checkpoint_trained_fingerprints(
+            checkpoint
+        ),
+    )
+    semantic_knowledge = SemanticKnowledgeArchitecture(
+        semantic_config
+    )
+    migrated_legacy_queue = consolidate_legacy_resolved(
+        Path(args.knowledge_queue)
+    )
+    if migrated_legacy_queue:
+        print(
+            f"[knowledge queue lifecycle: migrated "
+            f"{migrated_legacy_queue} legacy resolved row(s)]"
+        )
+        print()
+
     baseline_count = initialize_learning_state_if_missing(
         learning_state,
         learning_log,
@@ -2219,6 +3216,13 @@ def main() -> None:
             print()
             break
 
+        if not user_text:
+            continue
+
+        normalized_user_text = normalize_runtime_input(user_text)
+        if normalized_user_text and normalized_user_text != user_text:
+            print(f"[normalized input: {user_text!r} -> {normalized_user_text!r}]")
+            user_text = normalized_user_text
         if not user_text:
             continue
 
@@ -2270,6 +3274,668 @@ def main() -> None:
             print()
             continue
 
+        if command == "/props":
+            propositions = load_semantic_propositions(proposition_path)
+            if not propositions:
+                print("[semantic propositions: empty]")
+            else:
+                print(
+                    f"[semantic propositions: {len(propositions)} atomic item(s)]"
+                )
+                for index, item in enumerate(propositions, 1):
+                    print(
+                        f"  {index:02d}. "
+                        f"subject={item.subject!r} value={item.value!r}"
+                    )
+            print()
+            continue
+
+        if command.startswith("/propteach "):
+            statement = user_text[len("/propteach "):].strip()
+            added = semantic_knowledge.teach_proposition(statement)
+            if not added:
+                print(
+                    "[proposition teaching rejected: expected "
+                    "XはYである or Xは、Yであり、Zである]"
+                )
+            else:
+                print(
+                    f"[semantic knowledge teach: {len(added)} atomic item(s)]"
+                )
+                for item in added:
+                    print(
+                        f"  + subject={item.subject!r} value={item.value!r}"
+                    )
+                rendered = compose_semantic_proposition_subject(
+                    proposition_path,
+                    added[0].subject,
+                )
+                print(f"[proposition composed: {rendered}]")
+                print(
+                    "[semantic layers synchronized: "
+                    "proposition -> subject -> typed -> unified]"
+                )
+            print()
+            continue
+
+        if command == "/propsync":
+            sync = semantic_knowledge.sync_all()
+            print(
+                f"[semantic knowledge sync: "
+                f"atomic={sync.atomic_count}, "
+                f"subject_index={sync.subject_index_count}, "
+                f"typed_index={sync.typed_index_count}, "
+                f"unified_subjects={sync.unified_subject_count}]"
+            )
+            print()
+            continue
+
+        if command == "/batchstatus":
+            plan = batch_repair_plan(
+                Path(args.internalized_verification)
+            )
+            if plan.count == 0:
+                print("[verification batch: no active repair tasks]")
+            else:
+                print(
+                    f"[verification batch: tasks={plan.count}, "
+                    f"fingerprints={len(plan.fingerprints)}, "
+                    f"concepts={len(plan.concepts)}]"
+                )
+                for index, row in enumerate(plan.tasks, 1):
+                    print(
+                        f"  {index:02d}. "
+                        f"concept={row.get('concept', '')!r} "
+                        f"status={row.get('status', '')} "
+                        f"attempts={row.get('attempts', 0)} "
+                        f"fingerprint={str(row.get('fingerprint', ''))[:12]}"
+                    )
+            print()
+            continue
+
+        if command == "/verifystatus":
+            summary = verification_summary(
+                Path(args.internalized_verification)
+            )
+            print(
+                f"[internalized verification: "
+                f"pending={summary.pending}, "
+                f"retrain={summary.retrain}, "
+                f"verified={summary.verified}, "
+                f"failed={summary.failed}, "
+                f"total={summary.total}]"
+            )
+            print()
+            continue
+
+        if command == "/verifications":
+            rows = active_verifications(
+                Path(args.internalized_verification)
+            )
+            if not rows:
+                print("[internalized verifications: no active tasks]")
+            else:
+                print(
+                    f"[internalized verifications: {len(rows)} active task(s)]"
+                )
+                for index, row in enumerate(rows, 1):
+                    missing = "|".join(
+                        str(x) for x in row.get("missing_terms", [])
+                    ) or "-"
+                    print(
+                        f"  {index:02d}. concept={row.get('concept', '')!r} "
+                        f"status={row.get('status', '')} "
+                        f"attempts={row.get('attempts', 0)} "
+                        f"semantic={float(row.get('semantic', 0.0)):.3f} "
+                        f"lexical={float(row.get('lexical', 0.0)):.3f} "
+                        f"required={float(row.get('required', 0.0)):.3f} "
+                        f"missing={missing}"
+                    )
+            print()
+            continue
+
+        if command == "/promotionstatus":
+            summary = lifecycle_summary(
+                Path(args.knowledge_queue)
+            )
+            print(
+                f"[knowledge queue lifecycle: "
+                f"pending={summary.pending}, "
+                f"promoted={summary.promoted}, "
+                f"verified={summary.verified}, "
+                f"legacy_resolved={summary.legacy_resolved}, "
+                f"other={summary.other}, "
+                f"total={summary.total}]"
+            )
+            print()
+            continue
+
+        if command == "/promotions":
+            pending = pending_knowledge_requests(
+                Path(args.knowledge_queue)
+            )
+            if not pending:
+                print("[knowledge promotions: no pending UNKNOWN_KNOWLEDGE requests]")
+            else:
+                print(
+                    f"[knowledge promotions: {len(pending)} pending request(s)]"
+                )
+                for index, row in enumerate(pending, 1):
+                    print(
+                        f"  {index:02d}. user={row.get('user', '')!r}, "
+                        f"reason={row.get('reason', '')!r}, "
+                        f"timestamp={row.get('timestamp', '')!r}"
+                    )
+            print()
+            continue
+
+        if command.startswith("/promote "):
+            payload = user_text[len("/promote "):].strip()
+            if "=>" not in payload:
+                print("[usage: /promote CONCEPT => STATEMENT]")
+                print()
+                continue
+
+            concept, statement = [
+                part.strip()
+                for part in payload.split("=>", 1)
+            ]
+            if not concept or not statement:
+                print("[usage: /promote CONCEPT => STATEMENT]")
+                print()
+                continue
+
+            promotion = promote_knowledge(
+                semantic_knowledge,
+                Path(args.knowledge_queue),
+                concept,
+                statement,
+            )
+            if not promotion.promoted:
+                print(
+                    f"[knowledge promotion rejected: "
+                    f"concept={concept!r}, reason={promotion.reason}]"
+                )
+            else:
+                post = promotion.post_result
+                truth_state = (
+                    post.truth_state
+                    if post is not None
+                    else ""
+                )
+                print(
+                    f"[knowledge promoted: concept={concept!r}, "
+                    f"atomic={len(promotion.propositions)}, "
+                    f"queue_promoted={promotion.queue_promoted}, "
+                    f"post_state={post.state if post else '-'}, "
+                    f"post_action={post.action if post else '-'}, "
+                    f"truth_state={truth_state or '-'}]"
+                )
+                for item in promotion.propositions:
+                    print(
+                        f"  + {item.subject} => {item.value}"
+                    )
+                print(
+                    "[promotion pipeline: UNKNOWN -> validated proposition "
+                    "-> subject/typed/unified sync -> bare routing enabled]"
+                )
+            print()
+            continue
+
+        if command.startswith("/semantic "):
+            concept = user_text[len("/semantic "):].strip()
+            if not concept:
+                print("[usage: /semantic CONCEPT]")
+            else:
+                snapshot = snapshot_semantic_knowledge(
+                    semantic_knowledge,
+                    concept,
+                )
+                result = snapshot.result
+                state = result.knowledge_state
+                dispatch = result.dispatch
+                truth = result.truth
+                truth_result = result.truth_result
+                provenance = result.provenance
+
+                print(
+                    f"[semantic snapshot: concept={snapshot.concept!r}, "
+                    f"query={snapshot.query!r}]"
+                )
+
+                if snapshot.atomic_propositions:
+                    print(
+                        f"  Proposition  : {snapshot.proposition_count} atomic item(s)"
+                    )
+                    for item in snapshot.atomic_propositions:
+                        print(
+                            f"    - {item.subject} => {item.value}"
+                        )
+                else:
+                    print("  Proposition  : none")
+
+                print(
+                    "  Subject Index : "
+                    + (snapshot.subject_answer or "none")
+                )
+
+                if snapshot.typed_rows:
+                    print(
+                        f"  Typed Index   : {snapshot.typed_count} item(s)"
+                    )
+                    for row in snapshot.typed_rows:
+                        print(
+                            f"    - {row.predicate_type}: {row.statement}"
+                        )
+                else:
+                    print("  Typed Index   : none")
+
+                if snapshot.unified_row is not None:
+                    print(
+                        "  Unified Memory: "
+                        + str(snapshot.unified_row.get("assistant", ""))
+                    )
+                    print(
+                        f"    source={snapshot.unified_row.get('source', '')!r}, "
+                        f"updated_at={snapshot.unified_row.get('updated_at', '')!r}"
+                    )
+                else:
+                    print("  Unified Memory: none")
+
+                if snapshot.internalized is not None:
+                    internalized = snapshot.internalized
+                    print(
+                        f"  Internalized : yes, "
+                        f"trained_pairs={internalized.trained_pairs}, "
+                        f"sources={','.join(internalized.sources)}"
+                    )
+                    print(
+                        f"    latest_question={internalized.latest_question!r}"
+                    )
+                else:
+                    print("  Internalized : no")
+
+                if provenance is not None:
+                    print(
+                        f"  Provenance   : {provenance.compact()}"
+                    )
+                else:
+                    print("  Provenance   : none")
+
+                if truth is not None:
+                    runtime_status = (
+                        truth_result.runtime_status
+                        if truth_result is not None
+                        else "-"
+                    )
+                    warning = (
+                        truth_result.warning
+                        if truth_result is not None
+                        else ""
+                    )
+                    print(
+                        f"  Truth State  : {truth.state}, "
+                        f"runtime={runtime_status}, warning={warning!r}"
+                    )
+                    if truth.correction:
+                        print(
+                            f"    correction={truth.correction}"
+                        )
+                else:
+                    print("  Truth State  : none")
+
+                print(
+                    f"  Knowledge    : state={state.state}, "
+                    f"reason={state.reason}"
+                )
+                print(
+                    f"  Final Route  : action={dispatch.action}, "
+                    f"route={dispatch.route}, "
+                    f"reason={dispatch.reason}"
+                )
+                if dispatch.answer:
+                    print(f"  Final Answer : {dispatch.answer}")
+            print()
+            continue
+
+        if command == "/semstatus":
+            status = semantic_knowledge.status()
+            print(
+                f"[semantic knowledge architecture: "
+                f"version={status['version']}, "
+                f"layers={','.join(status['layers'])}]"
+            )
+            print(f"  proposition : {status['proposition_path']}")
+            print(f"  subject     : {status['subject_index_path']}")
+            print(f"  typed       : {status['typed_index_path']}")
+            print(f"  unified     : {status['unified_path']}")
+            print(f"  internalized: {status['learning_log']}")
+            print(f"  truth       : {status['truth_store_path']}")
+            print()
+            continue
+
+        if command == "/truths":
+            records = load_truth_records(truth_store_path)
+            if not records:
+                print("[truth states: empty; unresolved concepts default to UNVERIFIED]")
+            else:
+                print(f"[truth states: {len(records)} explicit record(s)]")
+                for index, record in enumerate(records, 1):
+                    correction = (
+                        f" correction={record.correction!r}"
+                        if record.correction
+                        else ""
+                    )
+                    print(
+                        f"  {index:02d}. concept={record.concept!r} "
+                        f"state={record.state} source={record.source} "
+                        f"updated_at={record.updated_at!r}"
+                        f"{correction}"
+                    )
+            print()
+            continue
+
+        if command.startswith("/truthset "):
+            payload = user_text[len("/truthset "):].strip()
+            left, sep, correction = payload.partition("=>")
+            parts = left.strip().split()
+            if len(parts) < 2:
+                print(
+                    "[usage: /truthset CONCEPT "
+                    "TRUE|FALSE|UNVERIFIED|CONTESTED|OUTDATED "
+                    "[=> CORRECTION]]"
+                )
+            else:
+                concept = parts[0].strip()
+                state_name = parts[1].strip().upper()
+                if state_name not in TRUTH_STATES:
+                    print(
+                        "[invalid truth state: "
+                        + state_name
+                        + "; expected "
+                        + "|".join(TRUTH_STATES)
+                        + "]"
+                    )
+                else:
+                    record = upsert_truth_record(
+                        truth_store_path,
+                        concept,
+                        state_name,
+                        correction=(correction.strip() if sep else ""),
+                        source="chat-manual-truth",
+                    )
+                    print(
+                        f"[truth state saved: concept={record.concept!r}, "
+                        f"state={record.state}, "
+                        f"correction={record.correction!r}, "
+                        f"updated_at={record.updated_at!r}]"
+                    )
+                    if state_name == "TRUE":
+                        verified_count = mark_concept_verified(
+                            Path(args.knowledge_queue),
+                            concept,
+                            truth_source="chat-manual-truth",
+                        )
+                        if verified_count:
+                            print(
+                                f"[knowledge queue verified: "
+                                f"concept={concept!r}, "
+                                f"entries={verified_count}]"
+                            )
+                    else:
+                        revoked_count = revoke_concept_verification(
+                            Path(args.knowledge_queue),
+                            concept,
+                            new_truth_state=state_name,
+                        )
+                        if revoked_count:
+                            print(
+                                f"[knowledge queue verification revoked: "
+                                f"concept={concept!r}, "
+                                f"entries={revoked_count}, "
+                                f"truth_state={state_name}]"
+                            )
+            print()
+            continue
+
+        if command.startswith("/truth "):
+            concept = user_text[len("/truth "):].strip()
+            if not concept:
+                print("[usage: /truth CONCEPT]")
+            else:
+                record = effective_truth_record(
+                    truth_store_path,
+                    concept,
+                )
+                explicit = (
+                    record.source != "truth-default"
+                )
+                print(
+                    f"[truth concept={record.concept!r}, "
+                    f"state={record.state}, explicit={explicit}, "
+                    f"source={record.source!r}, "
+                    f"updated_at={record.updated_at!r}, "
+                    f"reason={record.reason!r}, "
+                    f"correction={record.correction!r}]"
+                )
+            print()
+            continue
+
+        if command.startswith("/provenance "):
+            query = user_text[len("/provenance "):].strip()
+            if not query:
+                print("[usage: /provenance QUERY]")
+            else:
+                result = semantic_knowledge.resolve(query)
+                state = result.knowledge_state
+                provenance = state.provenance
+                if provenance is None:
+                    print("[provenance: none]")
+                else:
+                    print(
+                        f"[provenance state={state.state}, "
+                        f"focus={state.focus!r}, "
+                        f"source={provenance.source!r}, "
+                        f"origin={provenance.origin!r}, "
+                        f"priority={provenance.retrieval_priority}, "
+                        f"timestamp={provenance.timestamp!r}, "
+                        f"fingerprint={provenance.fingerprint!r}, "
+                        f"evidence={provenance.evidence!r}]"
+                    )
+                    if provenance.metadata:
+                        print(
+                            "[provenance metadata: "
+                            + ", ".join(
+                                f"{key}={value}"
+                                for key, value in provenance.metadata.items()
+                            )
+                            + "]"
+                        )
+            print()
+            continue
+
+        if command.startswith("/dispatch "):
+            query = user_text[len("/dispatch "):].strip()
+            if not query:
+                print("[usage: /dispatch QUERY]")
+            else:
+                result = semantic_knowledge.resolve(query)
+                dispatch = result.dispatch
+                truth_record = result.truth
+                truth_result = result.truth_result
+                provenance_text = (
+                    dispatch.provenance.compact()
+                    if dispatch.provenance is not None
+                    else "none"
+                )
+                truth_text = (
+                    truth_record.state
+                    if truth_record is not None
+                    else "-"
+                )
+                warning_text = (
+                    truth_result.warning
+                    if truth_result is not None
+                    else ""
+                )
+                runtime_text = (
+                    truth_result.runtime_status
+                    if truth_result is not None
+                    else "-"
+                )
+                print(
+                    f"[dispatch action={dispatch.action}, "
+                    f"state={dispatch.state}, "
+                    f"focus={dispatch.focus!r}, "
+                    f"predicate_type={dispatch.predicate_type!r}, "
+                    f"terminal={dispatch.is_terminal}, "
+                    f"route={dispatch.route}, "
+                    f"reason={dispatch.reason}, "
+                    f"truth_state={truth_text}, "
+                    f"truth_runtime={runtime_text}, "
+                    f"truth_warning={warning_text!r}, "
+                    f"bare_routed={result.bare_concept_routed}, "
+                    f"bare_unknown_blocked={result.bare_unknown_blocked}, "
+                    f"bare_focus={result.bare_focus!r}, "
+                    f"routed_query={result.routed_query!r}, "
+                    f"provenance={provenance_text}]"
+                )
+                if dispatch.answer:
+                    print(f"[dispatch answer: {dispatch.answer}]")
+            print()
+            continue
+
+        if command.startswith("/kstate "):
+            query = user_text[len("/kstate "):].strip()
+            if not query:
+                print("[usage: /kstate QUERY]")
+            else:
+                result = semantic_knowledge.resolve(query)
+                state = result.knowledge_state
+                print(
+                    f"[knowledge-state={state.state}, "
+                    f"focus={state.focus!r}, "
+                    f"predicate_type={state.predicate_type!r}, "
+                    f"retrieval={state.is_retrieval}, "
+                    f"model_generation={state.permits_model_generation}, "
+                    f"bare_routed={result.bare_concept_routed}, "
+                    f"bare_unknown_blocked={result.bare_unknown_blocked}, "
+                    f"bare_focus={result.bare_focus!r}, "
+                    f"routed_query={result.routed_query!r}, "
+                    f"reason={state.reason}]"
+                )
+                if state.answer:
+                    print(f"[resolved answer: {state.answer}]")
+            print()
+            continue
+
+        if command == "/internalized":
+            concepts = load_internalized_concepts(
+                learning_log,
+                learning_state,
+            )
+            if not concepts:
+                print("[internalized concepts: empty]")
+            else:
+                print(
+                    f"[internalized concepts: {len(concepts)} concept(s)]"
+                )
+                checkpoint_bound = (
+                    semantic_config.checkpoint_fingerprints
+                    or frozenset()
+                )
+                for index, concept in enumerate(concepts, 1):
+                    source_text = ",".join(concept.sources)
+                    bound = any(
+                        fp in checkpoint_bound
+                        for fp in concept.fingerprints
+                    )
+                    print(
+                        f"  {index:02d}. concept={concept.concept!r} "
+                        f"trained_pairs={concept.trained_pairs} "
+                        f"binding={'CURRENT' if bound else 'STALE'} "
+                        f"sources={source_text} "
+                        f"latest_question={concept.latest_question!r}"
+                    )
+            print()
+            continue
+
+        if command == "/typedsubjects":
+            grouped = typed_index_dict(typed_subject_index_path)
+            if not grouped:
+                print("[typed subject index: empty]")
+            else:
+                print(f"[typed subject index: {len(grouped)} subject(s)]")
+                for subject, by_type in grouped.items():
+                    print(f"  {subject}:")
+                    for predicate_type, statements in by_type.items():
+                        for statement in statements:
+                            print(
+                                f"    {subject} => {predicate_type} => "
+                                f"{statement}"
+                            )
+            print()
+            continue
+
+        if command.startswith("/typedsubject "):
+            subject = user_text[len("/typedsubject "):].strip()
+            mappings = typed_subject_mapping(
+                typed_subject_index_path,
+                subject,
+            )
+            if not mappings:
+                print(
+                    f"[no typed subject propositions for {subject!r}]"
+                )
+            else:
+                for mapping in mappings:
+                    print(mapping)
+            print()
+            continue
+
+        if command == "/subjects":
+            grouped = subject_index_dict(subject_index_path)
+            if not grouped:
+                print("[subject index: empty]")
+            else:
+                print(f"[subject index: {len(grouped)} subject(s)]")
+                for subject, statements in grouped.items():
+                    print(f"  {subject}:")
+                    for statement in statements:
+                        print(f"    {subject} => {statement}")
+            print()
+            continue
+
+        if command.startswith("/subject "):
+            subject = user_text[len("/subject "):].strip()
+            mappings = subject_mapping(subject_index_path, subject)
+            if not mappings:
+                print(f"[no subject-keyed propositions for {subject!r}]")
+            else:
+                for mapping in mappings:
+                    print(mapping)
+                composed = compose_subject_from_index(
+                    subject_index_path,
+                    subject,
+                )
+                if composed:
+                    print(f"[composed: {composed}]")
+            print()
+            continue
+
+        if command.startswith("/prop "):
+            subject = user_text[len("/prop "):].strip()
+            answer = compose_semantic_proposition_subject(
+                proposition_path,
+                subject,
+            )
+            if answer:
+                print(f"AI> {answer}")
+            else:
+                print(f"[no semantic propositions for {subject!r}]")
+            print()
+            continue
+
         if command.startswith("/teachq "):
             payload = user_text[len("/teachq "):].strip()
             if "=>" not in payload:
@@ -2312,15 +3978,6 @@ def main() -> None:
                 corrected,
                 source="chat-manual",
             )
-            resolved_knowledge = resolve_route_queue(
-                Path(args.knowledge_queue),
-                question,
-                "UNKNOWN_KNOWLEDGE",
-            )
-            if resolved_knowledge:
-                print(
-                    f"[resolved knowledge queue entries: {resolved_knowledge}]"
-                )
             if reactivated:
                 print("[previously trained pair reactivated for retraining]")
             print(
@@ -2357,15 +4014,6 @@ def main() -> None:
                         corrected,
                         source="chat-manual",
                     )
-                    resolved_knowledge = resolve_route_queue(
-                        Path(args.knowledge_queue),
-                        last_user_text,
-                        "UNKNOWN_KNOWLEDGE",
-                    )
-                    if resolved_knowledge:
-                        print(
-                            f"[resolved knowledge queue entries: {resolved_knowledge}]"
-                        )
                     if reactivated:
                         print(
                             "[previously trained pair reactivated for retraining]"
@@ -2440,6 +4088,259 @@ def main() -> None:
             print()
             continue
 
+        if command == "/trainbatch":
+            verification_path = Path(
+                args.internalized_verification
+            )
+            plan = batch_repair_plan(verification_path)
+            if plan.count == 0:
+                print("[verification batch: no active repair tasks]")
+                print()
+                continue
+
+            protected_records = protected_internalized_records(
+                learning_log,
+                set(checkpoint_trained_fingerprints(checkpoint)),
+                set(plan.fingerprints),
+                set(plan.concepts),
+            )
+            print(
+                f"[batch preservation baseline: "
+                f"protected={len(protected_records)}, "
+                f"repair_targets={plan.count}]"
+            )
+
+            reactivated_count = 0
+            already_pending_count = 0
+            for row in plan.tasks:
+                question = str(row.get("question", "")).strip()
+                teacher = str(
+                    row.get("teacher_answer", "")
+                ).strip()
+                if mark_pair_for_retraining(
+                    learning_state,
+                    question,
+                    teacher,
+                ):
+                    reactivated_count += 1
+                else:
+                    already_pending_count += 1
+
+            mark_batch_retrain(
+                verification_path,
+                set(plan.fingerprints),
+            )
+            print(
+                f"[verification batch prepared: "
+                f"tasks={plan.count}, "
+                f"reactivated={reactivated_count}, "
+                f"already_pending={already_pending_count}, "
+                f"concepts={'|'.join(plan.concepts)}]"
+            )
+
+            production_checkpoint = Path(args.online_output)
+            production_state = Path(args.learning_state)
+            (
+                candidate_checkpoint,
+                candidate_state,
+            ) = batch_candidate_paths(
+                production_checkpoint,
+                production_state,
+            )
+            discard_batch_candidate(
+                candidate_checkpoint,
+                candidate_state,
+            )
+
+            if not production_state.exists():
+                print(
+                    f"[batch candidate aborted: learning state not found: "
+                    f"{production_state}]"
+                )
+                print()
+                continue
+
+            candidate_state.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+            shutil.copy2(
+                production_state,
+                candidate_state,
+            )
+            print(
+                f"[batch candidate prepared: checkpoint={candidate_checkpoint}, "
+                f"state={candidate_state}]"
+            )
+            print(
+                f"[production checkpoint protected: {model_path}]"
+            )
+
+            new_candidate_path = run_online_training(
+                args,
+                model_path,
+                output_path=candidate_checkpoint,
+                state_path=candidate_state,
+            )
+            if new_candidate_path is None:
+                discard_batch_candidate(
+                    candidate_checkpoint,
+                    candidate_state,
+                )
+                print(
+                    "[batch candidate discarded: training did not produce "
+                    "a usable checkpoint; production unchanged]"
+                )
+                print()
+                continue
+
+            candidate_model, candidate_ckpt = (
+                LanguageModel.load_checkpoint(
+                    str(new_candidate_path),
+                    device=device,
+                )
+            )
+            print(
+                f"[loaded batch candidate checkpoint: "
+                f"{new_candidate_path}]"
+            )
+            print(
+                f"[candidate binding: "
+                f"{len(checkpoint_trained_fingerprints(candidate_ckpt))} "
+                "fingerprint(s)]"
+            )
+
+            (
+                preservation_ok,
+                preservation_passed,
+                preservation_failed,
+            ) = run_batch_preservation_gate(
+                model=candidate_model,
+                tokenizer=tokenizer,
+                protected_records=protected_records,
+                args=args,
+                batch_fingerprints=plan.fingerprints,
+            )
+
+            if args.batch_preservation_force_fail:
+                print(
+                    "[batch rollback test hook: forcing preservation FAIL "
+                    "after candidate evaluation]"
+                )
+                preservation_ok = False
+
+            (
+                repair_quality_ok,
+                repair_quality_passed,
+                repair_quality_failed,
+            ) = run_candidate_repair_quality_gate(
+                model=candidate_model,
+                tokenizer=tokenizer,
+                plan=plan,
+                args=args,
+            )
+
+            if args.candidate_repair_force_fail:
+                print(
+                    "[candidate repair-quality test hook: forcing FAIL "
+                    "after target evaluation]"
+                )
+                repair_quality_ok = False
+
+            if not preservation_ok or not repair_quality_ok:
+                discard_batch_candidate(
+                    candidate_checkpoint,
+                    candidate_state,
+                )
+                rollback_reason = (
+                    "preservation=FAIL"
+                    if not preservation_ok
+                    else "repair_quality=FAIL"
+                )
+                if not preservation_ok and not repair_quality_ok:
+                    rollback_reason = (
+                        "preservation=FAIL; repair_quality=FAIL"
+                    )
+                print(
+                    f"[batch rollback: {rollback_reason}; "
+                    "candidate checkpoint/state discarded]"
+                )
+                print(
+                    f"[production checkpoint retained: {model_path}]"
+                )
+                print(
+                    "[verification tasks remain retrain; "
+                    "adjust training/replay before retry]"
+                )
+                history.clear()
+                last_user_text = None
+                last_ai_reply = None
+                print(
+                    "[conversation history cleared after batch rollback]"
+                )
+                print()
+                continue
+
+            promote_batch_candidate(
+                candidate_checkpoint,
+                candidate_state,
+                production_checkpoint,
+                production_state,
+            )
+            model, checkpoint = LanguageModel.load_checkpoint(
+                str(production_checkpoint),
+                device=device,
+            )
+            model_path = production_checkpoint
+            print(
+                f"[batch candidate promoted: "
+                f"{production_checkpoint}]"
+            )
+            print(
+                f"[batch state promoted: {production_state}]"
+            )
+
+            semantic_config = replace(
+                semantic_config,
+                checkpoint_fingerprints=(
+                    checkpoint_trained_fingerprints(
+                        checkpoint
+                    )
+                ),
+            )
+            semantic_knowledge = (
+                SemanticKnowledgeArchitecture(
+                    semantic_config
+                )
+            )
+            print(
+                f"[checkpoint binding refreshed: "
+                f"{len(semantic_config.checkpoint_fingerprints or ())} "
+                "fingerprint(s)]"
+            )
+            print(
+                f"[verification batch trained: "
+                f"{plan.count} task(s); "
+                "preservation=PASS; repair_quality=PASS; "
+                "candidate=PROMOTED; "
+                "re-query each concept to resolve verification]"
+            )
+            for concept in plan.concepts:
+                print(f"  -> {concept}")
+            load_concept_calibration(
+                calibration_path,
+                device,
+            )
+            history.clear()
+            last_user_text = None
+            last_ai_reply = None
+            print(
+                "[conversation history cleared after "
+                "batch promotion]"
+            )
+            print()
+            continue
+
         if command == "/train":
             new_model_path = run_online_training(args, model_path)
             if new_model_path is not None:
@@ -2449,6 +4350,20 @@ def main() -> None:
                 )
                 model_path = new_model_path
                 print(f"[reloaded trained checkpoint: {model_path}]")
+                semantic_config = replace(
+                    semantic_config,
+                    checkpoint_fingerprints=(
+                        checkpoint_trained_fingerprints(checkpoint)
+                    ),
+                )
+                semantic_knowledge = SemanticKnowledgeArchitecture(
+                    semantic_config
+                )
+                print(
+                    f"[checkpoint binding refreshed: "
+                    f"{len(semantic_config.checkpoint_fingerprints or ())} "
+                    "fingerprint(s)]"
+                )
                 load_concept_calibration(calibration_path, device)
                 history.clear()
                 last_user_text = None
@@ -2458,6 +4373,7 @@ def main() -> None:
             continue
 
         last_user_text = user_text
+        internalized_record = None
 
         input_ok, input_reason = input_quality_check(user_text)
         if not input_ok:
@@ -2479,50 +4395,286 @@ def main() -> None:
             last_ai_reply = None
             continue
 
-        if args.unknown_rejection:
-            promoted_concepts = trained_known_concepts(
+        # v10.12.16.1 Retrieval-First Runtime.
+        # Exact Subject-Keyed Corpus Memory lookup precedes UNKNOWN/generation
+        # for explicit or bare concept queries. Explicit FALSE/OUTDATED/
+        # CONTESTED truth states bypass direct corpus retrieval and continue
+        # through the existing Truth-Aware Semantic Architecture.
+        retrieval_focus = extract_concept_query_focus(user_text)
+        if not retrieval_focus:
+            retrieval_focus = extract_bare_concept_focus(user_text)
+
+        if retrieval_focus:
+            corpus_memory_path = resolve_runtime_path(args.corpus_memory)
+            retrieval = retrieval_first_resolve_subject(
+                corpus_memory_path,
+                retrieval_focus,
+            )
+            if retrieval.hit:
+                retrieval_truth = effective_truth_record(
+                    truth_store_path,
+                    retrieval_focus,
+                )
+                direct_retrieval_allowed = truth_allows_direct_retrieval(
+                    retrieval_truth.state
+                )
+                if direct_retrieval_allowed:
+                    print(f"AI> {retrieval.answer}")
+                    function_part = ""
+                    if retrieval.function_structure is not None:
+                        fs = retrieval.function_structure
+                        function_part = (
+                            f", action={fs.action}, target={fs.target}, "
+                            f"purpose={fs.purpose}"
+                        )
+                    print(
+                        f"[retrieval-first=HIT, concept={retrieval.subject!r}, "
+                        f"relation={retrieval.relation or '-'}, "
+                        f"route={retrieval.route}, provenance={retrieval.provenance}, "
+                        f"truth_state={retrieval_truth.state}{function_part}]"
+                    )
+                    print("[0 generated probe tokens, corpus-memory retrieval]")
+                    print()
+                    history.append((user_text, retrieval.answer))
+                    last_ai_reply = retrieval.answer
+                    continue
+                else:
+                    print(
+                        f"[retrieval-first=HIT-BUT-TRUTH-BYPASS, "
+                        f"concept={retrieval.subject!r}, "
+                        f"truth_state={retrieval_truth.state}]"
+                    )
+
+        semantic_result = semantic_knowledge.resolve(
+            user_text
+        )
+        resolver_query = (
+            semantic_result.routed_query
+            or user_text
+        )
+        if semantic_result.bare_concept_routed:
+            print(
+                f"[semantic bare routing: {user_text!r} -> "
+                f"{resolver_query!r}]"
+            )
+        elif semantic_result.bare_unknown_blocked:
+            print(
+                f"[bare unknown safety gate: "
+                f"concept={semantic_result.bare_focus!r}, "
+                "generation=blocked]"
+            )
+        knowledge_state = semantic_result.knowledge_state
+        dispatch = semantic_result.dispatch
+        truth_record = semantic_result.truth
+        truth_result = semantic_result.truth_result
+
+        if truth_result is not None and truth_result.warning:
+            print(
+                f"[truth warning: state={truth_record.state}, "
+                f"concept={truth_record.concept!r}, "
+                f"message={truth_result.warning}]"
+            )
+
+        verification_override_record = (
+            active_internalized_verification_record(
+                Path(args.internalized_verification),
                 learning_log,
                 learning_state,
+                dispatch.focus,
             )
-            pre_unknown, pre_focus = pre_generation_unknown_concept(
-                user_text,
-                promoted_concepts=promoted_concepts,
+        )
+        force_internalized_verification = (
+            verification_override_record is not None
+        )
+        if (
+            force_internalized_verification
+            and dispatch.action == "RETRIEVE"
+        ):
+            print(
+                "[verification override: "
+                f"concept={dispatch.focus!r}, "
+                f"semantic_route={dispatch.route}, "
+                "verification=model-weights]"
             )
-            if pre_unknown:
+
+        if (
+            dispatch.action == "RETRIEVE"
+            and not force_internalized_verification
+        ):
+            print(f"AI> {dispatch.answer}")
+            predicate_part = (
+                f", predicate_type={dispatch.predicate_type}"
+                if dispatch.predicate_type
+                else ""
+            )
+            provenance_text = (
+                dispatch.provenance.compact()
+                if dispatch.provenance is not None
+                else "none"
+            )
+            truth_part = (
+                f", truth_state={truth_record.state}"
+                if truth_record is not None
+                else ""
+            )
+            correction_part = (
+                ", truth_correction=True"
+                if truth_result is not None
+                and truth_result.correction_applied
+                else ""
+            )
+            truth_runtime_part = (
+                f", truth_runtime={truth_result.runtime_status}"
+                if truth_result is not None
+                else ""
+            )
+            print(
+                f"[gate=KNOWN, knowledge_state={dispatch.state}, "
+                f"concept={dispatch.focus}{predicate_part}, "
+                f"route={dispatch.route}, reason={dispatch.reason}, "
+                f"provenance={provenance_text}"
+                f"{truth_part}{correction_part}{truth_runtime_part}]"
+            )
+            print("[0 generated probe tokens, retrieval]")
+            print()
+
+            resolved = resolve_teaching_queue(
+                Path(args.teaching_queue),
+                resolver_query,
+            )
+            if resolved:
+                print(f"[resolved teaching queue entries: {resolved}]")
+            history.append((resolver_query, dispatch.answer))
+            last_ai_reply = dispatch.answer
+            continue
+
+        if dispatch.action == "BLOCK" and not force_internalized_verification:
+            truth_block = (
+                truth_result is not None
+                and truth_result.runtime_status == "BLOCK"
+            )
+            stale_internalized = (
+                dispatch.state == "INTERNALIZED_STALE"
+                and not truth_block
+            )
+            if truth_block:
+                route_result = "truth-state block"
+                resolution_name = "TRUTH_BLOCK"
+                action_name = "review/correct"
+            elif stale_internalized:
+                route_result = "checkpoint rebind required"
+                resolution_name = "INTERNALIZED_STALE"
+                action_name = "rebind/train"
+            else:
                 route_result = route_resolution_action(
                     args=args,
                     resolution="UNKNOWN_KNOWLEDGE",
                     action="retrieve/teach",
-                    user_text=user_text,
+                    user_text=resolver_query,
                     candidate_answer="",
-                    reason=f"unknown concept: {pre_focus}",
+                    reason=(
+                        f"knowledge state {dispatch.state}: "
+                        f"{dispatch.reason}"
+                    ),
                 )
-                print(f"AI> {UNKNOWN_REPLY}")
-                print(f"[route={route_result}]")
+                resolution_name = "UNKNOWN_KNOWLEDGE"
+                action_name = "retrieve/teach"
+            block_reply = (
+                truth_result.user_message
+                if truth_result is not None
+                and truth_result.runtime_status == "BLOCK"
+                and truth_result.user_message
+                else (
+                    "学習証拠はありますが、現在のcheckpointには未反映です。"
+                    if stale_internalized
+                    else UNKNOWN_REPLY
+                )
+            )
+            print(f"AI> {block_reply}")
+            print(
+                f"[knowledge-state={dispatch.state}, "
+                f"concept={dispatch.focus}, generation=blocked]"
+            )
+            print(f"[route={route_result}]")
+            if truth_block:
+                print(
+                    "[truth path: set a correction with "
+                    "/truthset CONCEPT FALSE|OUTDATED => CORRECTION]"
+                )
+            elif stale_internalized:
+                print(
+                    "[checkpoint path: run /train to replay trusted pairs "
+                    "into the current checkpoint]"
+                )
+            else:
                 print(
                     "[teaching path: /teach ANSWER -> /train "
                     "(or /teachq QUESTION => ANSWER)]"
                 )
-                if args.show_risk:
-                    print(
-                        f"[gate=UNKNOWN, confidence=0.000, "
-                        f"min_tok_conf=0.000, mean_margin=0.000, "
-                        f"agreement=1.000, sem_agreement=1.000, "
-                        f"intent=concept_precheck, slots={pre_focus}, "
-                        f"slot_cov=0.00, qa_sim=0.000, prev_sim=-1.000, "
-                        f"agr_th={args.min_agreement:.2f}, context_turns=0, "
-                        f"resolution=UNKNOWN_KNOWLEDGE, action=retrieve/teach, "
-                        f"route=pre-generation concept gate, "
-                        f"reason=unknown concept: {pre_focus}]"
-                    )
-                print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
-                print()
-                last_ai_reply = None
-                continue
+            provenance_text = (
+                dispatch.provenance.compact()
+                if dispatch.provenance is not None
+                else "none"
+            )
+            truth_part = (
+                f", truth_state={truth_record.state}"
+                if truth_record is not None
+                else ""
+            )
+            truth_runtime_part = (
+                f", truth_runtime={truth_result.runtime_status}"
+                if truth_result is not None
+                else ""
+            )
+            print(
+                f"[gate=UNKNOWN, resolution={resolution_name}, "
+                f"action={action_name}, route={dispatch.route}, "
+                f"reason={dispatch.reason}, provenance={provenance_text}"
+                f"{truth_part}{truth_runtime_part}]"
+            )
+            print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
+            print()
+            last_ai_reply = None
+            continue
 
+        # GENERATE: INTERNALIZED, NON_CONCEPT, or active repair verification.
+        if force_internalized_verification:
+            internalized_record = verification_override_record
+            print(
+                "[internalized verification route: "
+                f"concept={dispatch.focus!r}, "
+                "generation=model-weights, "
+                f"shadowed_semantic_state={dispatch.state}, "
+                f"truth_state={truth_record.state if truth_record else 'UNVERIFIED'}]"
+            )
+        elif dispatch.state == "INTERNALIZED":
+            internalized_records = load_internalized_records(
+                learning_log,
+                learning_state,
+            )
+            internalized_record = internalized_record_for_focus(
+                internalized_records,
+                dispatch.focus,
+            )
+            print(
+                "[internalized route: "
+                f"concept={dispatch.focus!r}, "
+                "generation=model-weights, "
+                f"truth_state={truth_record.state if truth_record else 'UNVERIFIED'}]"
+            )
+        else:
+            internalized_record = None
+
+        user_text = resolver_query
+
+        generation_user_text = (
+            internalized_record.question
+            if internalized_record is not None
+            else normalize_identity_query(user_text)
+        )
         prompt, selected_history = build_prompt(
             history=history,
-            user_text=user_text,
+            user_text=generation_user_text,
             history_turns=args.history_turns,
         )
 
@@ -2628,6 +4780,7 @@ def main() -> None:
                 allow_semantic_rescue=(
                     semantic_ok
                     and slot_coverage >= 1.0
+                    and internalized_record is None
                 ),
             )
         else:
@@ -2641,19 +4794,116 @@ def main() -> None:
                 reason = semantic_reason
             # Preserve diagnostic reasons such as "semantic probe agreement".
 
+        internalized_fidelity = -1.0
+        internalized_lexical_coverage = -1.0
+        internalized_required_coverage = -1.0
+        internalized_contradiction = False
+        internalized_missing_terms: tuple[str, ...] = ()
+        if internalized_record is not None:
+            composite_fidelity = composite_internalized_teacher_fidelity(
+                model=model,
+                tokenizer=tokenizer,
+                generated_answer=primary.text,
+                teacher_answer=internalized_record.teacher_answer,
+                concept=internalized_record.concept,
+            )
+            internalized_fidelity = (
+                composite_fidelity.semantic_similarity
+            )
+            internalized_lexical_coverage = (
+                composite_fidelity.lexical_coverage
+            )
+            internalized_required_coverage = (
+                composite_fidelity.required_coverage
+            )
+            internalized_contradiction = (
+                composite_fidelity.contradiction
+            )
+            internalized_missing_terms = (
+                composite_fidelity.missing_terms
+            )
+            fidelity_ok, fidelity_reason = (
+                apply_composite_internalized_fidelity_policy(
+                    accepted=accepted,
+                    result=composite_fidelity,
+                    semantic_threshold=args.min_internalized_fidelity,
+                    lexical_threshold=(
+                        args.min_internalized_lexical_coverage
+                    ),
+                    required_threshold=(
+                        args.min_internalized_required_coverage
+                    ),
+                )
+            )
+            if not fidelity_ok:
+                accepted = False
+                if fidelity_reason:
+                    reason = fidelity_reason
+            elif accepted:
+                reason = fidelity_reason
+
         resolution, action = classify_resolution(
             accepted,
             reason,
             user_text,
         )
-        route_result = route_resolution_action(
-            args=args,
-            resolution=resolution,
-            action=action,
-            user_text=user_text,
-            candidate_answer=primary.text,
-            reason=reason,
-        )
+        if internalized_record is not None and not accepted:
+            resolution = "INTERNALIZED_UNSTABLE"
+            action = "retrain/review"
+            verification_path = Path(
+                args.internalized_verification
+            )
+            upsert_internalized_unstable(
+                verification_path,
+                concept=internalized_record.concept,
+                question=internalized_record.question,
+                teacher_answer=internalized_record.teacher_answer,
+                candidate_answer=primary.text,
+                reason=reason,
+                semantic=internalized_fidelity,
+                lexical=internalized_lexical_coverage,
+                required=internalized_required_coverage,
+                contradiction=internalized_contradiction,
+                missing_terms=internalized_missing_terms,
+                fingerprint=internalized_record.fingerprint,
+            )
+            reactivated = mark_pair_for_retraining(
+                learning_state,
+                internalized_record.question,
+                internalized_record.teacher_answer,
+            )
+            if reactivated:
+                mark_internalized_verification_retrain(
+                    verification_path,
+                    internalized_record.fingerprint,
+                )
+            route_result = (
+                "internalized verification loop: "
+                + (
+                    "trusted pair reactivated for /train"
+                    if reactivated
+                    else "verification task pending/retrain"
+                )
+            )
+        else:
+            route_result = route_resolution_action(
+                args=args,
+                resolution=resolution,
+                action=action,
+                user_text=user_text,
+                candidate_answer=primary.text,
+                reason=reason,
+            )
+
+        if accepted and internalized_record is not None:
+            verified = mark_internalized_verification_verified(
+                Path(args.internalized_verification),
+                internalized_record.concept,
+                internalized_record.fingerprint,
+            )
+            route_result = "internalized model generation"
+            if verified:
+                route_result += f"; verification resolved={verified}"
 
         reply = primary.text if accepted else UNKNOWN_REPLY
         new_tokens = sum(r.token_count for r in results)
@@ -2673,10 +4923,43 @@ def main() -> None:
             print(f"[candidate={primary.text}]")
 
         if args.show_risk and args.unknown_rejection:
-            status = "KNOWN" if accepted else "UNKNOWN"
+            if accepted and internalized_record is not None:
+                status = "INTERNALIZED"
+            else:
+                status = "KNOWN" if accepted else "UNKNOWN"
             semantic_part = ""
+            internalized_part = (
+                (
+                    f", internalized_concept={internalized_record.concept}"
+                    f", teacher_sem={internalized_fidelity:.3f}"
+                    f", teacher_lex={internalized_lexical_coverage:.3f}"
+                    f", teacher_req={internalized_required_coverage:.3f}"
+                    f", teacher_contra={internalized_contradiction}"
+                    f", fidelity_th={args.min_internalized_fidelity:.3f}"
+                    f", lex_th={args.min_internalized_lexical_coverage:.3f}"
+                    f", req_th={args.min_internalized_required_coverage:.3f}"
+                    f", missing={'|'.join(internalized_missing_terms) or '-'}"
+                )
+                if internalized_record is not None
+                else ""
+            )
             if args.semantic_consistency:
                 slot_text = "|".join(slots) if slots else "-"
+                internalized_part = (
+                    (
+                        f", internalized_concept={internalized_record.concept}"
+                        f", teacher_sem={internalized_fidelity:.3f}"
+                        f", teacher_lex={internalized_lexical_coverage:.3f}"
+                        f", teacher_req={internalized_required_coverage:.3f}"
+                        f", teacher_contra={internalized_contradiction}"
+                        f", fidelity_th={args.min_internalized_fidelity:.3f}"
+                        f", lex_th={args.min_internalized_lexical_coverage:.3f}"
+                        f", req_th={args.min_internalized_required_coverage:.3f}"
+                        f", missing={'|'.join(internalized_missing_terms) or '-'}"
+                    )
+                    if internalized_record is not None
+                    else ""
+                )
                 semantic_part = (
                     f", intent={intent}"
                     f", slots={slot_text}"
@@ -2685,6 +4968,11 @@ def main() -> None:
                     f", prev_sim={previous_similarity:.3f}"
                     f", agr_th={effective_agreement:.2f}"
                 )
+            truth_part = (
+                f", truth_state={truth_record.state}"
+                if truth_record is not None
+                else ""
+            )
             print(
                 f"[gate={status}, "
                 f"confidence={confidence:.3f}, "
@@ -2692,7 +4980,9 @@ def main() -> None:
                 f"mean_margin={primary.mean_top2_margin:.3f}, "
                 f"agreement={agreement:.3f}, "
                 f"sem_agreement={semantic_agreement:.3f}"
-                f"{semantic_part}, "
+                f"{semantic_part}"
+                f"{internalized_part}"
+                f"{truth_part}, "
                 f"context_turns={len(selected_history)}, "
                 f"resolution={resolution}, action={action}, "
                 f"route={route_result}, reason={reason}]"
