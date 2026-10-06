@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.12 Corpus-to-Semantic Knowledge Training."""
+"""LLM_TRY v10.12.15 Subject-to-Proposition + Corpus-to-Semantic Training."""
 
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ def parse_args():
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--freeze-blocks", type=int, default=2)
     p.add_argument("--preservation-weight", type=int, default=2)
+    p.add_argument("--subject-mapping-weight", type=int, default=3)
     p.add_argument("--max-role-multiplier", type=int, default=4)
     p.add_argument("--grad-clip", type=float, default=0.5)
     return p.parse_args()
@@ -54,6 +55,20 @@ def main():
     for item in balanced:
         for q in training_queries(item):
             pairs.append((q, item.answer))
+
+    # v10.12.15 formal Subject -> Full Proposition training.
+    # The training input explicitly encodes:
+    #     subject => subject + predicate/full proposition
+    # while the target remains the canonical full proposition.
+    subject_mapping_rows = 0
+    subject_to_answer = {item.subject: item.answer for item in raw_items}
+    for subject, answer in subject_to_answer.items():
+        mapping_query = f"{subject} =>"
+        full_mapping_query = f"{subject} => {answer}"
+        for _ in range(max(1, args.subject_mapping_weight)):
+            pairs.append((mapping_query, answer))
+            pairs.append((full_mapping_query, answer))
+            subject_mapping_rows += 2
 
     protected = protected_internalized_records(
         Path(args.learning_log),
@@ -76,7 +91,7 @@ def main():
     optimizer = torch.optim.AdamW(trainable, lr=args.learning_rate, weight_decay=0.01)
 
     print("=" * 116)
-    print(" LLM_TRY v10.12.12 Corpus-to-Semantic Knowledge Training")
+    print(" LLM_TRY v10.12.15 Subject-to-Proposition + Corpus-to-Semantic Training")
     print("=" * 116)
     print("Device              :", device)
     if device.type == "cuda":
@@ -85,6 +100,8 @@ def main():
     print("Role counts before  :", counts_before)
     print("Role counts after   :", counts_after)
     print("Protected concepts  :", len(protected))
+    print("Subject map weight  :", args.subject_mapping_weight)
+    print("Subject map rows    :", subject_mapping_rows)
     print("Total train rows    :", len(pairs))
 
     best_loss = float("inf")
@@ -118,7 +135,10 @@ def main():
     metadata = checkpoint.get("metadata", {})
     metadata = dict(metadata) if isinstance(metadata, dict) else {}
     metadata.update({
-        "corpus_semantic_version": "v10.12.12",
+        "corpus_semantic_version": "v10.12.15",
+        "subject_to_proposition_version": "v10.12.15",
+        "subject_mapping_weight": args.subject_mapping_weight,
+        "subject_mapping_rows": subject_mapping_rows,
         "corpus_semantic_train": args.train,
         "corpus_semantic_source_propositions": len(raw_items),
         "corpus_semantic_role_counts_before": counts_before,
