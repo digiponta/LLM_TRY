@@ -83,3 +83,16 @@ Expected final result:
 STATUS : SEMANTIC_KNOWLEDGE_RUNTIME_STABLE_FULL_PASS
 
 The verifier does not train or promote a model.
+
+
+## Verification dependency correction
+
+The initial v10.13.0 verifier referenced the historical filename
+run_chat_learning_regression_v1626.py, which is not present in LLM_TRY.
+
+The stable verifier now uses the repository's existing consolidated regression:
+
+run_full_regression_v1051.py
+
+This correction changes only the verification dependency; it does not change
+the v10.13.0 runtime architecture or production model.
