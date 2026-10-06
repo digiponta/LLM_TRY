@@ -158,11 +158,11 @@ Experimental training branches after v10.12 remain historical evidence and are n
 
 ---
 
-# LLM_TRY v10.5.2 — Stable Adaptive Learning Release
+# LLM_TRY v10.5.2 — Historical Stable Adaptive Learning Milestone
 
-**Status: Stable candidate verified by full regression (10/10 PASS).**
+**Status: Historical stable milestone verified by full regression (10/10 PASS). Superseded by v10.13.0.**
 
-LLM_TRY v10.5.2 is the current stable experimental release of the LLM_TRY line.
+LLM_TRY v10.5.2 is a historical stable experimental milestone of the LLM_TRY line.
 It extends the original Known/Unknown gate with persistent, human-supervised
 incremental learning while preserving established knowledge.
 
