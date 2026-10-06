@@ -11,7 +11,7 @@ from pathlib import Path
 STEPS = [
     ("Stable Architecture Regression", [sys.executable, "run_semantic_runtime_stable_v10130.py"]),
     ("Retrieval-First Full Verification", [sys.executable, "verify_retrieval_first_runtime_v1012161.py"]),
-    ("Legacy Stable Chat Regression", [sys.executable, "run_full_regression_v1051.py"]),
+    ("Stable Chat Runtime Contract", [sys.executable, "run_stable_chat_runtime_v10130.py"]),
     (
         "Runtime Syntax Check",
         [
@@ -67,7 +67,7 @@ def main():
     print("Retrieval-first       : PASS")
     print("Subject corpus memory : PASS")
     print("Unknown fallback      : PASS")
-    print("Legacy chat runtime   : PASS")
+    print("Stable chat runtime   : PASS")
     print("Truth/runtime syntax  : PASS")
     print("Model retraining      : NONE")
     print("Production mutation   : NONE")
