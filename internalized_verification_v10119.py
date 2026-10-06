@@ -25,6 +25,17 @@ class VerificationSummary:
     total: int = 0
 
 
+@dataclass(frozen=True)
+class BatchRepairPlan:
+    tasks: tuple[dict, ...] = ()
+    fingerprints: tuple[str, ...] = ()
+    concepts: tuple[str, ...] = ()
+
+    @property
+    def count(self) -> int:
+        return len(self.tasks)
+
+
 def _load(path: Path) -> list[dict]:
     if not path.exists():
         return []
@@ -169,3 +180,69 @@ def active_verifications(path: Path) -> list[dict]:
         row for row in _load(path)
         if str(row.get("status", "")) in {PENDING, RETRAIN}
     ]
+
+
+def batch_repair_plan(path: Path) -> BatchRepairPlan:
+    """Return all active verification tasks that require repair training."""
+    tasks = tuple(
+        row for row in _load(path)
+        if str(row.get("status", "")) in {PENDING, RETRAIN}
+        and str(row.get("question", "")).strip()
+        and str(row.get("teacher_answer", "")).strip()
+        and str(row.get("fingerprint", "")).strip()
+    )
+    fingerprints = tuple(
+        dict.fromkeys(str(row["fingerprint"]) for row in tasks)
+    )
+    concepts = tuple(
+        dict.fromkeys(str(row.get("concept", "")) for row in tasks)
+    )
+    return BatchRepairPlan(
+        tasks=tasks,
+        fingerprints=fingerprints,
+        concepts=concepts,
+    )
+
+
+def mark_batch_retrain(path: Path, fingerprints: set[str]) -> int:
+    if not fingerprints:
+        return 0
+    rows = _load(path)
+    changed = 0
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    for row in rows:
+        if (
+            str(row.get("fingerprint", "")) in fingerprints
+            and str(row.get("status", "")) in {PENDING, RETRAIN}
+        ):
+            if str(row.get("status", "")) != RETRAIN:
+                changed += 1
+            row["status"] = RETRAIN
+            row["batch_retrain_at"] = now
+    if changed:
+        _save(path, rows)
+    return changed
+
+
+def mark_batch_failed(
+    path: Path,
+    fingerprints: set[str],
+    reason: str,
+) -> int:
+    if not fingerprints:
+        return 0
+    rows = _load(path)
+    changed = 0
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    for row in rows:
+        if (
+            str(row.get("fingerprint", "")) in fingerprints
+            and str(row.get("status", "")) in {PENDING, RETRAIN}
+        ):
+            row["status"] = FAILED
+            row["failed_at"] = now
+            row["failure_reason"] = reason
+            changed += 1
+    if changed:
+        _save(path, rows)
+    return changed
