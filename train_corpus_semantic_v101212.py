@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.15 Subject-to-Proposition + Corpus-to-Semantic Training."""
+"""LLM_TRY v10.12.15.1 Balanced Subject-to-Proposition + Semantic Training."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def parse_args():
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--freeze-blocks", type=int, default=2)
     p.add_argument("--preservation-weight", type=int, default=2)
-    p.add_argument("--subject-mapping-weight", type=int, default=3)
+    p.add_argument("--subject-mapping-weight", type=int, default=1)
     p.add_argument("--max-role-multiplier", type=int, default=4)
     p.add_argument("--grad-clip", type=float, default=0.5)
     return p.parse_args()
@@ -63,12 +63,14 @@ def main():
     subject_mapping_rows = 0
     subject_to_answer = {item.subject: item.answer for item in raw_items}
     for subject, answer in subject_to_answer.items():
+        # Formal lookup form:
+        #     subject => [generate full proposition]
+        # Do NOT feed the full right-hand proposition back as input; that would
+        # duplicate the target and over-weight copying rather than retrieval.
         mapping_query = f"{subject} =>"
-        full_mapping_query = f"{subject} => {answer}"
         for _ in range(max(1, args.subject_mapping_weight)):
             pairs.append((mapping_query, answer))
-            pairs.append((full_mapping_query, answer))
-            subject_mapping_rows += 2
+            subject_mapping_rows += 1
 
     protected = protected_internalized_records(
         Path(args.learning_log),
@@ -91,7 +93,7 @@ def main():
     optimizer = torch.optim.AdamW(trainable, lr=args.learning_rate, weight_decay=0.01)
 
     print("=" * 116)
-    print(" LLM_TRY v10.12.15 Subject-to-Proposition + Corpus-to-Semantic Training")
+    print(" LLM_TRY v10.12.15.1 Balanced Subject-to-Proposition + Semantic Training")
     print("=" * 116)
     print("Device              :", device)
     if device.type == "cuda":
@@ -135,8 +137,8 @@ def main():
     metadata = checkpoint.get("metadata", {})
     metadata = dict(metadata) if isinstance(metadata, dict) else {}
     metadata.update({
-        "corpus_semantic_version": "v10.12.15",
-        "subject_to_proposition_version": "v10.12.15",
+        "corpus_semantic_version": "v10.12.15.1",
+        "subject_to_proposition_version": "v10.12.15.1",
         "subject_mapping_weight": args.subject_mapping_weight,
         "subject_mapping_rows": subject_mapping_rows,
         "corpus_semantic_train": args.train,
