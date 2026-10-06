@@ -41,8 +41,8 @@ DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
 DEFAULT_AFTER = "model/model-gpu-v1.6.2-online.pt"
 DEFAULT_BEFORE = "model/model-gpu-v1.6.2-online-pre-nagato.pt"
 DEFAULT_LOG = "data/chat_history.jsonl"
-DEFAULT_PROBES = "data/nagato_gain_probes_v10126.jsonl"
-DEFAULT_REPORT = "results/nagato_knowledge_gain_v10126.json"
+DEFAULT_PROBES = "data/nagato_gain_probes_v10127.jsonl"
+DEFAULT_REPORT = "results/nagato_knowledge_gain_v10127.json"
 
 
 @dataclass(frozen=True)
@@ -76,6 +76,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-semantic", type=float, default=0.90)
     p.add_argument("--min-lexical", type=float, default=0.45)
     p.add_argument("--min-required", type=float, default=0.50)
+    p.add_argument(
+        "--min-qa-mean-gain",
+        type=float,
+        default=0.01,
+        help="Minimum mean composite QA score gain for v10.12.7 QA PASS.",
+    )
     return p.parse_args()
 
 
@@ -184,6 +190,9 @@ def load_probes(path: Path) -> list[dict]:
                 "question": question,
                 "answer": answer,
                 "concept": str(row.get("concept", "")).strip(),
+                "probe_id": str(row.get("probe_id", "")).strip(),
+                "source_text": str(row.get("source_text", "")).strip(),
+                "source": str(row.get("source", "")).strip(),
             })
     return rows
 
@@ -256,7 +265,7 @@ def main() -> None:
     after_ppl = math.exp(min(after_mean, 20.0))
 
     print("=" * 112)
-    print(" LLM_TRY v10.12.6 Nagato Knowledge Gain Evaluation")
+    print(" LLM_TRY v10.12.7 Nagato Knowledge Gain + QA Probe Evaluation")
     print("=" * 112)
     print("Device             :", device)
     if device.type == "cuda":
@@ -401,6 +410,29 @@ def main() -> None:
         if probe_results
         else None
     )
+    qa_improved = sum(1 for x in probe_results if x["gain"] > 1e-6)
+    qa_same = sum(1 for x in probe_results if abs(x["gain"]) <= 1e-6)
+    qa_regressed = len(probe_results) - qa_improved - qa_same
+    qa_gain_ok = (
+        bool(probe_results)
+        and qa_gain_mean is not None
+        and qa_gain_mean >= args.min_qa_mean_gain
+        and qa_improved > qa_regressed
+    )
+
+    if probe_results:
+        print()
+        print("QA probe summary")
+        print("----------------")
+        print(f"Probe count         : {len(probe_results)}")
+        print(f"Improved            : {qa_improved}")
+        print(f"Same                : {qa_same}")
+        print(f"Regressed           : {qa_regressed}")
+        print(f"Mean QA gain        : {qa_gain_mean:+.3f}")
+        print(
+            "QA gain status      :",
+            "PASS" if qa_gain_ok else "FAIL",
+        )
 
     print()
     print(
@@ -409,12 +441,13 @@ def main() -> None:
         f"nll_gain={mean_gain:+.6f}, "
         f"window_improved={improved}/{len(scores)}, "
         f"qa_gain={'n/a' if qa_gain_mean is None else f'{qa_gain_mean:+.3f}'}, "
+        f"qa_status={'n/a' if not probe_results else ('PASS' if qa_gain_ok else 'FAIL')}, "
         f"retention={'PASS' if retention_ok else 'FAIL'}, "
         f"persona={'PASS' if persona_ok else 'FAIL'}]"
     )
 
     report = {
-        "version": "v10.12.6",
+        "version": "v10.12.7",
         "before": str(before_path),
         "after": str(after_path),
         "data": str(data_path),
@@ -433,6 +466,11 @@ def main() -> None:
         "corpus_gain_passed": corpus_gain_ok,
         "qa_probes": probe_results,
         "qa_gain_mean": qa_gain_mean,
+        "qa_improved": qa_improved,
+        "qa_same": qa_same,
+        "qa_regressed": qa_regressed,
+        "qa_gain_passed": qa_gain_ok,
+        "qa_gain_threshold": args.min_qa_mean_gain,
         "retention": retention_results,
         "retention_passed": retention_ok,
         "persona_answer": identity,
