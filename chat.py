@@ -92,6 +92,10 @@ from knowledge_promotion_v10114 import (
     pending_knowledge_requests,
     promote_knowledge,
 )
+from candidate_repair_quality_v10123 import (
+    RepairQualityProbe,
+    append_repair_quality_audit,
+)
 from batch_repair_preservation_v10121 import (
     PreservationProbe,
     append_preservation_audit,
@@ -136,6 +140,9 @@ DEFAULT_INTERNALIZED_VERIFICATION = (
 )
 DEFAULT_BATCH_PRESERVATION_AUDIT = (
     "data/batch_preservation_v10121.jsonl"
+)
+DEFAULT_CANDIDATE_REPAIR_QUALITY_AUDIT = (
+    "data/candidate_repair_quality_v10123.jsonl"
 )
 
 USER_PREFIX = "人: "
@@ -255,6 +262,19 @@ def parse_args() -> argparse.Namespace:
         help=(
             "TEST ONLY: force candidate rollback after preservation "
             "evaluation to validate v10.12.2 rollback behavior."
+        ),
+    )
+    parser.add_argument(
+        "--candidate-repair-quality-audit",
+        default=DEFAULT_CANDIDATE_REPAIR_QUALITY_AUDIT,
+        help="Persistent v10.12.3 candidate repair-quality audit log.",
+    )
+    parser.add_argument(
+        "--candidate-repair-force-fail",
+        action="store_true",
+        help=(
+            "TEST ONLY: force Repair Quality Gate FAIL after evaluation "
+            "to validate v10.12.3 rollback behavior."
         ),
     )
     parser.add_argument(
@@ -2764,7 +2784,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.12.2 Candidate Checkpoint / Rollback")
+    print(" LLM_TRY Chat - v10.12.3 Candidate Repair Quality Gate")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2824,6 +2844,103 @@ def print_info(
         if binding_version:
             print("Binding version :", binding_version)
     print()
+
+
+def run_candidate_repair_quality_gate(
+    *,
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    plan,
+    args: argparse.Namespace,
+) -> tuple[bool, int, int]:
+    probes: list[RepairQualityProbe] = []
+
+    for row in plan.tasks:
+        concept = str(row.get("concept", "")).strip()
+        question = str(row.get("question", "")).strip()
+        teacher = str(row.get("teacher_answer", "")).strip()
+        fingerprint = str(row.get("fingerprint", "")).strip()
+
+        prompt, _ = build_prompt(
+            history=[],
+            user_text=question,
+            history_turns=0,
+        )
+        generated = generate_reply(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            max_new_tokens=args.max_new_tokens,
+            temperature=0.0,
+            top_k=args.top_k,
+            repetition_penalty=args.repetition_penalty,
+            seed=0,
+        )
+        malformed = malformed_or_unstable(generated.text)
+        composite = composite_internalized_teacher_fidelity(
+            model=model,
+            tokenizer=tokenizer,
+            generated_answer=generated.text,
+            teacher_answer=teacher,
+            concept=concept,
+        )
+        fidelity_ok, fidelity_reason = (
+            apply_composite_internalized_fidelity_policy(
+                accepted=not malformed,
+                result=composite,
+                semantic_threshold=args.min_internalized_fidelity,
+                lexical_threshold=args.min_internalized_lexical_coverage,
+                required_threshold=args.min_internalized_required_coverage,
+            )
+        )
+        reason = (
+            fidelity_reason
+            if fidelity_reason
+            else (
+                "malformed/repetitive output"
+                if malformed
+                else "repair quality gate rejected"
+            )
+        )
+        probes.append(
+            RepairQualityProbe(
+                concept=concept,
+                question=question,
+                teacher_answer=teacher,
+                fingerprint=fingerprint,
+                generated_answer=generated.text,
+                semantic=composite.semantic_similarity,
+                lexical=composite.lexical_coverage,
+                required=composite.required_coverage,
+                contradiction=composite.contradiction,
+                passed=fidelity_ok,
+                reason=reason,
+            )
+        )
+        print(
+            f"[repair quality {'PASS' if fidelity_ok else 'FAIL'}: "
+            f"concept={concept!r}, "
+            f"sem={composite.semantic_similarity:.3f}, "
+            f"lex={composite.lexical_coverage:.3f}, "
+            f"req={composite.required_coverage:.3f}, "
+            f"contra={composite.contradiction}]"
+        )
+        if not fidelity_ok:
+            print(f"  candidate={generated.text}")
+            print(f"  reason={reason}")
+
+    summary = append_repair_quality_audit(
+        Path(args.candidate_repair_quality_audit),
+        probes=probes,
+    )
+    print(
+        f"[candidate repair quality gate: "
+        f"targets={summary.targets}, "
+        f"passed={summary.passed}, "
+        f"failed={summary.failed}, "
+        f"status={'PASS' if summary.ok else 'FAIL'}]"
+    )
+    return summary.ok, summary.passed, summary.failed
 
 
 def run_batch_preservation_gate(
@@ -4101,13 +4218,40 @@ def main() -> None:
                 )
                 preservation_ok = False
 
-            if not preservation_ok:
+            (
+                repair_quality_ok,
+                repair_quality_passed,
+                repair_quality_failed,
+            ) = run_candidate_repair_quality_gate(
+                model=candidate_model,
+                tokenizer=tokenizer,
+                plan=plan,
+                args=args,
+            )
+
+            if args.candidate_repair_force_fail:
+                print(
+                    "[candidate repair-quality test hook: forcing FAIL "
+                    "after target evaluation]"
+                )
+                repair_quality_ok = False
+
+            if not preservation_ok or not repair_quality_ok:
                 discard_batch_candidate(
                     candidate_checkpoint,
                     candidate_state,
                 )
+                rollback_reason = (
+                    "preservation=FAIL"
+                    if not preservation_ok
+                    else "repair_quality=FAIL"
+                )
+                if not preservation_ok and not repair_quality_ok:
+                    rollback_reason = (
+                        "preservation=FAIL; repair_quality=FAIL"
+                    )
                 print(
-                    "[batch rollback: preservation=FAIL; "
+                    f"[batch rollback: {rollback_reason}; "
                     "candidate checkpoint/state discarded]"
                 )
                 print(
@@ -4166,7 +4310,8 @@ def main() -> None:
             print(
                 f"[verification batch trained: "
                 f"{plan.count} task(s); "
-                "preservation=PASS; candidate=PROMOTED; "
+                "preservation=PASS; repair_quality=PASS; "
+                "candidate=PROMOTED; "
                 "re-query each concept to resolve verification]"
             )
             for concept in plan.concepts:
