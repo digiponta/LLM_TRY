@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.15 Subject-to-Proposition + Corpus-to-Semantic dataset builder.
+"""LLM_TRY v10.12.16 Subject-Keyed Corpus Memory + Semantic dataset builder.
 
 Converts source-grounded Xは... sentences in data-nagato.txt into explicit
 subject / relation / object_description propositions.
@@ -78,7 +78,7 @@ def main() -> None:
     for index, row in enumerate(first_by_subject.values(), 1):
         item = decompose_role(row["concept"], row["question"], row["answer"])
         propositions.append({
-            "version": "v10.12.15",
+            "version": "v10.12.16",
             "semantic_id": f"nagato-sem-{index:03d}",
             "subject": item.subject,
             "relation": item.relation,
@@ -138,7 +138,7 @@ def main() -> None:
     train_counts = Counter(row["relation"] for row in train)
 
     print("=" * 116)
-    print(" LLM_TRY v10.12.15 Subject-to-Proposition + Corpus-to-Semantic Dataset")
+    print(" LLM_TRY v10.12.16 Subject-Keyed Corpus Memory + Semantic Dataset")
     print("=" * 116)
     print("Corpus                 :", data_path)
     print("Source candidates      :", len(candidates))
