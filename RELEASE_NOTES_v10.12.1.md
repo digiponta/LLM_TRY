@@ -82,3 +82,34 @@ python .\run_verification_aware_batch_learning_v10120.py
 python .\run_post_batch_internalized_verification_override_v10120.py
 python .\run_internalized_verification_loop_v10119.py
 python .\run_composite_teacher_fidelity_gate_v10118.py
+
+
+## Protected-set refinement after runtime validation
+
+Runtime validation revealed that fingerprint-only exclusion can still leave
+other trusted pairs of the same repair-target concept in the preservation set.
+
+v10.12.1 therefore uses concept-level exclusion:
+
+protected concepts =
+  checkpoint-bound INTERNALIZED concepts
+  - repair target concepts
+
+For each remaining protected concept, only the latest checkpoint-bound trusted
+teacher record is preserved and tested. This matches normal INTERNALIZED runtime
+semantics and prevents duplicate teacher rows from inflating preservation
+failures.
+
+Example:
+
+repair targets:
+- 文学
+- 架空装置
+
+protected:
+- 宇宙
+- 数学
+- 量子センサー
+
+Even if 文学 has several trusted fingerprints, all 文学 rows are excluded
+from the preservation baseline for that batch.
