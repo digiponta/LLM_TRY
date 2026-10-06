@@ -435,6 +435,44 @@ def mark_pair_for_retraining(
     return True
 
 
+def active_internalized_verification_record(
+    verification_path: Path,
+    learning_log: Path,
+    learning_state: Path,
+    focus: str,
+):
+    """Return CURRENT internalized record for an active repair task.
+
+    This is used only for post-training verification. It lets a repaired
+    INTERNALIZED concept be tested against model weights even when a higher-
+    priority TYPED/UNIFIED retrieval source exists.
+    """
+    target = str(focus).strip().lower()
+    if not target:
+        return None
+
+    rows = active_verifications(verification_path)
+    active_fingerprints = {
+        str(row.get("fingerprint", ""))
+        for row in rows
+        if str(row.get("concept", "")).strip().lower() == target
+    }
+    if not active_fingerprints:
+        return None
+
+    records = load_internalized_records(
+        learning_log,
+        learning_state,
+    )
+    for record in reversed(records):
+        if (
+            record.concept.strip().lower() == target
+            and record.fingerprint in active_fingerprints
+        ):
+            return record
+    return None
+
+
 def choose_startup_model(
     requested_model: str,
     online_output: str = DEFAULT_ONLINE_MODEL,
@@ -3893,7 +3931,32 @@ def main() -> None:
                 f"message={truth_result.warning}]"
             )
 
-        if dispatch.action == "RETRIEVE":
+        verification_override_record = (
+            active_internalized_verification_record(
+                Path(args.internalized_verification),
+                learning_log,
+                learning_state,
+                dispatch.focus,
+            )
+        )
+        force_internalized_verification = (
+            verification_override_record is not None
+        )
+        if (
+            force_internalized_verification
+            and dispatch.action == "RETRIEVE"
+        ):
+            print(
+                "[verification override: "
+                f"concept={dispatch.focus!r}, "
+                f"semantic_route={dispatch.route}, "
+                "verification=model-weights]"
+            )
+
+        if (
+            dispatch.action == "RETRIEVE"
+            and not force_internalized_verification
+        ):
             print(f"AI> {dispatch.answer}")
             predicate_part = (
                 f", predicate_type={dispatch.predicate_type}"
@@ -3941,7 +4004,7 @@ def main() -> None:
             last_ai_reply = dispatch.answer
             continue
 
-        if dispatch.action == "BLOCK":
+        if dispatch.action == "BLOCK" and not force_internalized_verification:
             truth_block = (
                 truth_result is not None
                 and truth_result.runtime_status == "BLOCK"
@@ -4030,8 +4093,17 @@ def main() -> None:
             last_ai_reply = None
             continue
 
-        # GENERATE: only INTERNALIZED and NON_CONCEPT reach this point.
-        if dispatch.state == "INTERNALIZED":
+        # GENERATE: INTERNALIZED, NON_CONCEPT, or active repair verification.
+        if force_internalized_verification:
+            internalized_record = verification_override_record
+            print(
+                "[internalized verification route: "
+                f"concept={dispatch.focus!r}, "
+                "generation=model-weights, "
+                f"shadowed_semantic_state={dispatch.state}, "
+                f"truth_state={truth_record.state if truth_record else 'UNVERIFIED'}]"
+            )
+        elif dispatch.state == "INTERNALIZED":
             internalized_records = load_internalized_records(
                 learning_log,
                 learning_state,
