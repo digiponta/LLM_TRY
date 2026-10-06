@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.13 Function Semantic Decomposition Evaluation."""
+"""LLM_TRY v10.12.13.1 Preservation-Balanced Function Evaluation."""
 
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ def main():
         raise RuntimeError("No function HOLDOUT rows found")
 
     print("="*116)
-    print(" LLM_TRY v10.12.13 Function Semantic Decomposition Evaluation")
+    print(" LLM_TRY v10.12.13.1 Preservation-Balanced Function Evaluation")
     print("="*116)
     print("Device                 :",device)
     if device.type=="cuda":
@@ -172,7 +172,7 @@ def main():
 
     persona=gen(after,tok,"あなたは誰ですか").strip().rstrip("。")=="長門有希"
     meta=ack.get("metadata",{}) if isinstance(ack.get("metadata",{}),dict) else {}
-    metadata_ok=meta.get("function_semantic_version")=="v10.12.13"
+    metadata_ok=meta.get("function_semantic_version")=="v10.12.13.1"
     retention_ok=len(retention)>0 and all(retention)
 
     final=all((function_sem_ok,function_struct_ok,guard_ok,retention_ok,persona,metadata_ok))
@@ -192,7 +192,7 @@ def main():
 
     Path(args.report).parent.mkdir(parents=True,exist_ok=True)
     Path(args.report).write_text(json.dumps({
-        "version":"v10.12.13",
+        "version":"v10.12.13.1",
         "function_results":function_results,
         "mean_function_semantic_gain":mean_sem,
         "mean_function_structured_gain":mean_struct,
