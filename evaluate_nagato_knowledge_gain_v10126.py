@@ -40,6 +40,7 @@ DEFAULT_DATA = "data/data-nagato.txt"
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
 DEFAULT_AFTER = "model/model-gpu-v1.6.2-online.pt"
 DEFAULT_BEFORE = "model/model-gpu-v1.6.2-online-pre-nagato.pt"
+DEFAULT_BASELINE_MANIFEST = "model/baselines/nagato_baseline_latest.json"
 DEFAULT_LOG = "data/chat_history.jsonl"
 DEFAULT_PROBES = "data/nagato_gain_probes_v10127.jsonl"
 DEFAULT_REPORT = "results/nagato_knowledge_gain_v10127.json"
@@ -61,6 +62,14 @@ def parse_args() -> argparse.Namespace:
         description="Compare pre/post Nagato checkpoints and quantify corpus knowledge gain."
     )
     p.add_argument("--before", default=DEFAULT_BEFORE)
+    p.add_argument(
+        "--baseline-manifest",
+        default=DEFAULT_BASELINE_MANIFEST,
+        help=(
+            "When --before is left at its compatibility default, use the "
+            "timestamped snapshot recorded in this latest-baseline manifest."
+        ),
+    )
     p.add_argument("--after", default=DEFAULT_AFTER)
     p.add_argument("--data", default=DEFAULT_DATA)
     p.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
@@ -83,6 +92,43 @@ def parse_args() -> argparse.Namespace:
         help="Minimum mean composite QA score gain for v10.12.7 QA PASS.",
     )
     return p.parse_args()
+
+
+def resolve_before_path(args: argparse.Namespace) -> Path:
+    """Prefer the latest timestamped baseline when --before is not overridden."""
+    requested = Path(args.before)
+    if args.before != DEFAULT_BEFORE:
+        if not requested.exists():
+            raise FileNotFoundError(f"Before checkpoint not found: {requested}")
+        return requested
+
+    manifest_path = Path(args.baseline_manifest)
+    if manifest_path.exists():
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Invalid baseline manifest: {manifest_path}: {exc}"
+            ) from exc
+
+        snapshot = Path(str(payload.get("snapshot", "")).strip())
+        if not snapshot.exists():
+            raise FileNotFoundError(
+                f"Timestamped baseline from manifest not found: {snapshot}"
+            )
+        print(f"[latest timestamped baseline: {snapshot}]")
+        return snapshot
+
+    if requested.exists():
+        print(
+            f"[WARN] baseline manifest not found; using compatibility baseline: "
+            f"{requested}"
+        )
+        return requested
+
+    raise FileNotFoundError(
+        f"No baseline available: manifest={manifest_path}, fallback={requested}"
+    )
 
 
 def resolve_data_path(value: str) -> Path:
@@ -199,7 +245,7 @@ def load_probes(path: Path) -> list[dict]:
 
 def main() -> None:
     args = parse_args()
-    before_path = Path(args.before)
+    before_path = resolve_before_path(args)
     after_path = Path(args.after)
     tokenizer_path = Path(args.tokenizer)
     data_path = resolve_data_path(args.data)
