@@ -69,6 +69,7 @@ def main() -> None:
             log,
             fps,
             {repair_fp},
+            {"文学"},
         )
         check(
             "repair-target-excluded",
