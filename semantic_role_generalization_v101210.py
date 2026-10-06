@@ -30,10 +30,18 @@ def infer_relation(subject: str, answer: str) -> str:
     # Specific structural cues first.
     if re.search(r"(より|同じ|異な|違い|似て|類似|比較)", text):
         return "comparison"
-    if re.search(r"(ため|ので|から|によって|原因|起因|ゆえ)", text):
-        return "cause"
-    if re.search(r"(使う|使って|使用|働く|働いて|実行|処理|行う|役割|仲介|利用)", text):
+
+    # Function cues must be checked before generic causal particles such as
+    # "ため".  For example, "命令を実行するために使われる" describes a
+    # function/purpose, not a cause.
+    if re.search(r"(使う|使って|使われ|使用|働く|働いて|実行|処理|行う|役割|仲介|利用)", text):
         return "function"
+
+    # Cause is intentionally narrower than v10.12.10 initial implementation.
+    # Bare "ため" is ambiguous with purpose, so require causal constructions.
+    if re.search(r"(原因|起因|によって|なので|ゆえに|結果として|ために生じ|ために起き)", text):
+        return "cause"
+
     if re.search(r"(と言われ|と呼ば|である|であり|とは)", text):
         return "definition"
     return "property"
