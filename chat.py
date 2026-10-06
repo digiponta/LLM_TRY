@@ -2793,7 +2793,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.12.3 Candidate Repair Quality Gate")
+    print(" LLM_TRY Chat - v10.12.16.1 Retrieval-First Runtime")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
