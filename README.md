@@ -1,3 +1,148 @@
+# LLM_TRY v10.13.0 — Semantic Knowledge Runtime Stable Release
+
+**Status: stable runtime candidate. Full verification must pass on the target machine before release promotion.**
+
+v10.13.0 freezes the experimentally validated Semantic Knowledge Runtime architecture built through the v10.9-v10.12 series.
+
+## Stable Runtime Architecture
+
+~~~text
+User Query
+   |
+   v
+Input / Concept Analysis
+   |
+   v
+Retrieval-First Runtime
+   |
+   +-- Subject-Keyed Corpus Memory HIT
+   |      |
+   |      +-- Full Proposition
+   |      +-- Relation metadata
+   |      +-- Function: action / target / purpose
+   |      +-- Truth-State safety overlay
+   |      -> direct retrieval, 0 generated probe tokens
+   |
+   +-- MISS
+          |
+          v
+Semantic Knowledge Architecture
+   |
+   +-- Atomic Proposition
+   +-- Subject Index
+   +-- Typed Index
+   +-- Unified Semantic Memory
+   +-- Internalized Knowledge / Checkpoint Binding
+   +-- Provenance
+   +-- Truth State
+   +-- Knowledge State Resolver
+   +-- Dispatcher
+          |
+          +-- RETRIEVE
+          +-- GENERATE
+          +-- BLOCK / Unknown fallback
+~~~
+
+## Stable data-nagato knowledge path
+
+~~~text
+data/data-nagato.txt
+      |
+      v
+Subject-Keyed Corpus Memory
+      |
+      +-- 72 source-grounded proposition records
+      +-- 56 unique subjects
+      +-- canonical form: subject => full proposition
+      |
+      v
+Retrieval-First Runtime
+~~~
+
+The latest verified v10.12.16.1 runtime result on RTX 3070 Ti was:
+
+~~~text
+Subject HIT rate     : 100.00%
+Proposition coverage : 100.00%
+Function slot rate   : 100.00%
+Unknown fallback     : PASS
+Generation required  : NO for memory HIT
+Model retraining     : NONE
+STATUS               : RETRIEVAL_FIRST_RUNTIME_FULL_PASS
+~~~
+
+These figures are controlled project regression results for the current data-nagato corpus; they are not claims of general-purpose knowledge accuracy.
+
+## Stable model
+
+~~~text
+Tokenizer       : byte-level BPE
+Vocabulary size : 8,000
+Parameters      : 8,960,000
+Context length  : 512
+d_model         : 256
+Transformer     : 6 layers
+Attention heads : 8
+Production      : model/model-gpu-v1.6.2-online.pt
+GPU tested      : NVIDIA GeForce RTX 3070 Ti
+~~~
+
+v10.13.0 intentionally performs no additional model retraining. The stable runtime uses the current production checkpoint plus explicit semantic/retrieval layers.
+
+## Full stable verification
+
+Run:
+
+~~~powershell
+python .\verify_semantic_runtime_stable_v10130.py
+~~~
+
+Expected final status:
+
+~~~text
+STATUS : SEMANTIC_KNOWLEDGE_RUNTIME_STABLE_FULL_PASS
+~~~
+
+The stable verification covers architecture regression, Retrieval-First Runtime, Subject-Keyed Corpus Memory, Unknown fallback, the existing chat-learning regression, and syntax validation of the runtime modules.
+
+## Recommended runtime
+
+Build or refresh corpus memory:
+
+~~~powershell
+python .\build_subject_keyed_corpus_memory_v101216.py
+~~~
+
+Then start chat:
+
+~~~powershell
+python .\chat.py --model model/model-gpu-v1.6.2-online.pt
+~~~
+
+For a corpus-memory HIT, the runtime reports:
+
+~~~text
+[retrieval-first=HIT, ...]
+[0 generated probe tokens, corpus-memory retrieval]
+~~~
+
+## Stable release boundary
+
+Included in v10.13.0:
+
+- Semantic Knowledge Architecture
+- Truth-State overlay
+- Provenance and Knowledge-State dispatch
+- Internalized Knowledge / checkpoint binding
+- Subject-Keyed Corpus Memory
+- Retrieval-First Runtime
+- Function structure extraction
+- Unknown fallback / existing chat gates
+
+Experimental training branches after v10.12 remain historical evidence and are not required in the stable runtime path.
+
+---
+
 # LLM_TRY v10.5.2 — Stable Adaptive Learning Release
 
 **Status: Stable candidate verified by full regression (10/10 PASS).**
