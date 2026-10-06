@@ -118,6 +118,7 @@ from knowledge_queue_lifecycle_v10115 import (
 )
 from retrieval_first_runtime_v1012161 import (
     resolve_subject as retrieval_first_resolve_subject,
+    truth_allows_direct_retrieval,
 )
 
 
@@ -4414,9 +4415,9 @@ def main() -> None:
                     truth_store_path,
                     retrieval_focus,
                 )
-                direct_retrieval_allowed = retrieval_truth.state not in {
-                    "FALSE", "OUTDATED", "CONTESTED",
-                }
+                direct_retrieval_allowed = truth_allows_direct_retrieval(
+                    retrieval_truth.state
+                )
                 if direct_retrieval_allowed:
                     print(f"AI> {retrieval.answer}")
                     function_part = ""
