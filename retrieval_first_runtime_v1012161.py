@@ -109,3 +109,15 @@ def resolve_subject(
         route="CORPUS_MEMORY",
         provenance="data-nagato.txt:subject-keyed-corpus-memory:v10.12.16",
     )
+
+
+def truth_allows_direct_retrieval(state: str) -> bool:
+    """Return whether corpus memory may answer directly under Truth-State policy.
+
+    FALSE / OUTDATED / CONTESTED must continue through the existing
+    Truth-Aware Semantic Architecture. TRUE and UNVERIFIED may be retrieved
+    directly with provenance/truth state exposed to the caller.
+    """
+    return str(state).strip().upper() not in {
+        "FALSE", "OUTDATED", "CONTESTED",
+    }
