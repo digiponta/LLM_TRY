@@ -1012,10 +1012,50 @@ def promote_batch_candidate(
     production_checkpoint: Path,
     production_state: Path,
 ) -> None:
+    """Promote checkpoint/state together with rollback on partial failure."""
     production_checkpoint.parent.mkdir(parents=True, exist_ok=True)
     production_state.parent.mkdir(parents=True, exist_ok=True)
-    candidate_checkpoint.replace(production_checkpoint)
-    candidate_state.replace(production_state)
+
+    checkpoint_backup = production_checkpoint.with_name(
+        production_checkpoint.name + ".promotion-backup"
+    )
+    state_backup = production_state.with_name(
+        production_state.name + ".promotion-backup"
+    )
+    for backup in (checkpoint_backup, state_backup):
+        if backup.exists():
+            backup.unlink()
+
+    checkpoint_had_original = production_checkpoint.exists()
+    state_had_original = production_state.exists()
+
+    if checkpoint_had_original:
+        shutil.copy2(production_checkpoint, checkpoint_backup)
+    if state_had_original:
+        shutil.copy2(production_state, state_backup)
+
+    try:
+        candidate_checkpoint.replace(production_checkpoint)
+        candidate_state.replace(production_state)
+    except Exception:
+        # Restore both production files to the exact pre-promotion pair.
+        if checkpoint_had_original and checkpoint_backup.exists():
+            shutil.copy2(checkpoint_backup, production_checkpoint)
+        elif not checkpoint_had_original and production_checkpoint.exists():
+            production_checkpoint.unlink()
+
+        if state_had_original and state_backup.exists():
+            shutil.copy2(state_backup, production_state)
+        elif not state_had_original and production_state.exists():
+            production_state.unlink()
+        raise
+    finally:
+        for backup in (checkpoint_backup, state_backup):
+            try:
+                if backup.exists():
+                    backup.unlink()
+            except OSError:
+                pass
 
 
 def _slot_overlap(a: list[str], b: list[str]) -> bool:
