@@ -30,7 +30,13 @@ from internalized_knowledge_v10100 import (
     load_trained_fingerprints,
     pair_fingerprint,
 )
-from subject_keyed_corpus_memory_v101216 import load_memory
+from build_nagato_gain_probes_v10127 import sentence_candidates
+from semantic_role_generalization_v101210 import decompose_role
+from subject_keyed_corpus_memory_v101216 import (
+    CorpusMemoryRecord,
+    load_memory,
+    save_memory,
+)
 from unified_semantic_bridge_v1090 import (
     load_unified_rows,
     save_unified_rows,
@@ -124,11 +130,52 @@ def load_nagato_semantic_memory(path: Path) -> list[dict]:
     return out
 
 
+def ensure_corpus_memory(
+    raw_corpus_path: Path,
+    corpus_memory_path: Path,
+) -> int:
+    existing = load_memory(corpus_memory_path)
+    if existing:
+        return len(existing)
+
+    text = raw_corpus_path.read_text(encoding="utf-8")
+
+    class BuildArgs:
+        min_answer_chars = 12
+        max_answer_chars = 160
+        data = str(raw_corpus_path)
+
+    candidates = sentence_candidates(text, BuildArgs())
+    records: list[CorpusMemoryRecord] = []
+    seen = set()
+    for row in candidates:
+        item = decompose_role(row["concept"], row["question"], row["answer"])
+        key = (item.subject, item.answer)
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append(
+            CorpusMemoryRecord(
+                subject=item.subject,
+                statement=item.answer,
+                relation=item.relation,
+                object_description=item.object_description,
+                source_text=row["source_text"],
+                source=str(raw_corpus_path),
+            )
+        )
+
+    save_memory(corpus_memory_path, records)
+    return len(records)
+
+
 def bootstrap_nagato_semantic_memory(
+    raw_corpus_path: Path,
     corpus_memory_path: Path,
     semantic_memory_path: Path,
     unified_path: Path,
 ) -> SemanticMemorySync:
+    ensure_corpus_memory(raw_corpus_path, corpus_memory_path)
     rows = _group_corpus(corpus_memory_path)
     save_nagato_semantic_memory(semantic_memory_path, rows)
 
