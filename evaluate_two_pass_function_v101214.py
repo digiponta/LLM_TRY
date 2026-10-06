@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.14 Two-Pass Function Semantic Resolver Evaluation."""
+"""LLM_TRY v10.12.14.1 Multi-Probe Two-Pass Function Resolver Evaluation."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def parse_args():
     p.add_argument("--tokenizer", default="model/tokenizer-v0.7-bpe.json")
     p.add_argument("--seen", default="data/nagato_corpus_semantic_holdout_seen_v101212.jsonl")
     p.add_argument("--unseen", default="data/nagato_corpus_semantic_holdout_unseen_v101212.jsonl")
-    p.add_argument("--report", default="results/two_pass_function_v101214.json")
+    p.add_argument("--report", default="results/two_pass_function_v1012141.json")
     p.add_argument("--min-two-pass-gain", type=float, default=0.005)
     p.add_argument("--min-structured-slot-rate", type=float, default=0.50)
     return p.parse_args()
@@ -95,7 +95,7 @@ def main():
         raise RuntimeError("No function HOLDOUT rows found")
 
     print("=" * 116)
-    print(" LLM_TRY v10.12.14 Two-Pass Function Semantic Resolver Evaluation")
+    print(" LLM_TRY v10.12.14.1 Multi-Probe Two-Pass Function Resolver Evaluation")
     print("=" * 116)
     print("Device                  :", device)
     if device.type == "cuda":
@@ -199,7 +199,7 @@ def main():
     Path(args.report).parent.mkdir(parents=True, exist_ok=True)
     Path(args.report).write_text(
         json.dumps({
-            "version": "v10.12.14",
+            "version": "v10.12.14.1",
             "model": args.model,
             "function_results": results,
             "mean_two_pass_gain": mean_gain,
