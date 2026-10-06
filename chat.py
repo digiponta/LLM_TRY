@@ -116,6 +116,9 @@ from knowledge_queue_lifecycle_v10115 import (
     mark_concept_verified,
     revoke_concept_verification,
 )
+from retrieval_first_runtime_v1012161 import (
+    resolve_subject as retrieval_first_resolve_subject,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -134,6 +137,7 @@ DEFAULT_SEMANTIC_KNOWLEDGE = "data/unified_semantic_memory_v1090.jsonl"
 DEFAULT_PROPOSITION_STORE = "data/semantic_propositions_v1090.jsonl"
 DEFAULT_SUBJECT_INDEX = "data/subject_keyed_propositions_v1090.jsonl"
 DEFAULT_TYPED_SUBJECT_INDEX = "data/typed_subject_propositions_v10100.jsonl"
+DEFAULT_CORPUS_MEMORY = "data/subject_keyed_corpus_memory_v101216.jsonl"
 DEFAULT_TRUTH_STORE = "data/truth_state_v10103.jsonl"
 DEFAULT_INTERNALIZED_VERIFICATION = (
     "data/internalized_verification_v10119.jsonl"
@@ -240,6 +244,11 @@ def parse_args() -> argparse.Namespace:
         "--typed-subject-index",
         default=DEFAULT_TYPED_SUBJECT_INDEX,
         help="Derived Subject => Predicate Type => Statement index.",
+    )
+    parser.add_argument(
+        "--corpus-memory",
+        default=DEFAULT_CORPUS_MEMORY,
+        help="v10.12.16 subject-keyed corpus memory used by retrieval-first runtime.",
     )
     parser.add_argument(
         "--truth-store",
@@ -2824,6 +2833,7 @@ def print_info(
         print("Proposition db  :", args.propositions)
         print("Subject index   :", args.subject_index)
         print("Typed index     :", args.typed_subject_index)
+        print("Corpus memory   :", args.corpus_memory)
         print(
             "Concept calib   :",
             CALIBRATION_INFO.get("version", "raw fallback")
@@ -4383,6 +4393,56 @@ def main() -> None:
             print()
             last_ai_reply = None
             continue
+
+        # v10.12.16.1 Retrieval-First Runtime.
+        # Exact Subject-Keyed Corpus Memory lookup precedes UNKNOWN/generation
+        # for explicit or bare concept queries. Explicit FALSE/OUTDATED/
+        # CONTESTED truth states bypass direct corpus retrieval and continue
+        # through the existing Truth-Aware Semantic Architecture.
+        retrieval_focus = extract_concept_query_focus(user_text)
+        if not retrieval_focus:
+            retrieval_focus = extract_bare_concept_focus(user_text)
+
+        if retrieval_focus:
+            corpus_memory_path = resolve_runtime_path(args.corpus_memory)
+            retrieval = retrieval_first_resolve_subject(
+                corpus_memory_path,
+                retrieval_focus,
+            )
+            if retrieval.hit:
+                retrieval_truth = effective_truth_record(
+                    truth_store_path,
+                    retrieval_focus,
+                )
+                direct_retrieval_allowed = retrieval_truth.state not in {
+                    "FALSE", "OUTDATED", "CONTESTED",
+                }
+                if direct_retrieval_allowed:
+                    print(f"AI> {retrieval.answer}")
+                    function_part = ""
+                    if retrieval.function_structure is not None:
+                        fs = retrieval.function_structure
+                        function_part = (
+                            f", action={fs.action}, target={fs.target}, "
+                            f"purpose={fs.purpose}"
+                        )
+                    print(
+                        f"[retrieval-first=HIT, concept={retrieval.subject!r}, "
+                        f"relation={retrieval.relation or '-'}, "
+                        f"route={retrieval.route}, provenance={retrieval.provenance}, "
+                        f"truth_state={retrieval_truth.state}{function_part}]"
+                    )
+                    print("[0 generated probe tokens, corpus-memory retrieval]")
+                    print()
+                    history.append((user_text, retrieval.answer))
+                    last_ai_reply = retrieval.answer
+                    continue
+                else:
+                    print(
+                        f"[retrieval-first=HIT-BUT-TRUTH-BYPASS, "
+                        f"concept={retrieval.subject!r}, "
+                        f"truth_state={retrieval_truth.state}]"
+                    )
 
         semantic_result = semantic_knowledge.resolve(
             user_text
