@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.13.1 Preservation-Balanced Function Semantic Training."""
+"""LLM_TRY v10.12.13.2 Leakage-Free Function Inference Training."""
 
 from __future__ import annotations
 
@@ -15,7 +15,11 @@ from tokenizer_bpe import Tokenizer
 from batch_repair_preservation_v10121 import protected_internalized_records
 from chat import checkpoint_trained_fingerprints
 from semantic_role_generalization_v101210 import training_queries
-from function_semantic_decomposition_v101213 import function_training_queries
+from function_semantic_decomposition_v101213 import (
+    function_training_queries,
+    function_inference_prompt,
+    function_inference_slot_prompt,
+)
 from train_semantic_role_generalization_v101210 import (
     RoleQADataset,
     load_role_items,
@@ -31,13 +35,14 @@ def parse_args():
     p.add_argument("--output", default="model/model-gpu-v1.6.2-online-function-semantic-candidate.pt")
     p.add_argument("--learning-log", default="data/chat_history.jsonl")
     p.add_argument("--epochs", type=int, default=4)
-    p.add_argument("--learning-rate", type=float, default=2e-6)
+    p.add_argument("--learning-rate", type=float, default=1e-6)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--freeze-blocks", type=int, default=2)
-    p.add_argument("--function-weight", type=int, default=2)
+    p.add_argument("--function-weight", type=int, default=1)
+    p.add_argument("--function-inference-weight", type=int, default=4)
     p.add_argument("--function-generic-weight", type=int, default=3)
     p.add_argument("--nonfunction-replay-weight", type=int, default=2)
-    p.add_argument("--preservation-weight", type=int, default=2)
+    p.add_argument("--preservation-weight", type=int, default=4)
     p.add_argument("--grad-clip", type=float, default=0.5)
     return p.parse_args()
 
@@ -76,6 +81,20 @@ def main():
                 pairs.append((q,item.answer))
                 function_struct_rows += 1
 
+    # Leakage-free function inference training: the input intentionally hides
+    # action/target/purpose.  The model must recover the functional semantics
+    # from the subject and learned knowledge rather than receiving gold slots.
+    function_inference_rows=0
+    for item in function_items:
+        inference_queries=(
+            function_inference_prompt(item.subject),
+            function_inference_slot_prompt(item.subject),
+        )
+        for _ in range(max(1,args.function_inference_weight)):
+            for q in inference_queries:
+                pairs.append((q,item.answer))
+                function_inference_rows += 1
+
     # Explicit non-function semantic replay prevents a surgical function update
     # from eroding the semantic space learned by v10.12.12.
     nonfunction_replay_rows=0
@@ -111,7 +130,7 @@ def main():
     optimizer=torch.optim.AdamW(trainable,lr=args.learning_rate,weight_decay=0.01)
 
     print("="*116)
-    print(" LLM_TRY v10.12.13.1 Preservation-Balanced Function Semantic Training")
+    print(" LLM_TRY v10.12.13.2 Leakage-Free Function Inference Training")
     print("="*116)
     print("Device                :",device)
     if device.type=="cuda":
@@ -120,10 +139,12 @@ def main():
     print("Total propositions    :",len(items))
     print("Function propositions :",len(function_items))
     print("Function struct weight:",args.function_weight)
+    print("Function inference wt. :",args.function_inference_weight)
     print("Function generic wt.  :",args.function_generic_weight)
     print("Non-function replay wt:",args.nonfunction_replay_weight)
     print("Function generic rows :",function_generic_rows)
     print("Function struct rows  :",function_struct_rows)
+    print("Function infer rows   :",function_inference_rows)
     print("Nonfunction replay rows:",nonfunction_replay_rows)
     print("Protected concepts    :",len(protected))
     print("Preservation rows     :",preservation_rows)
@@ -161,11 +182,14 @@ def main():
     metadata=checkpoint.get("metadata",{})
     metadata=dict(metadata) if isinstance(metadata,dict) else {}
     metadata.update({
-        "function_semantic_version":"v10.12.13.1",
+        "function_semantic_version":"v10.12.13.2",
+        "function_semantic_parent_version":"v10.12.13.1",
         "function_semantic_parent_version":"v10.12.13",
         "function_semantic_train":args.train,
         "function_semantic_function_count":len(function_items),
         "function_semantic_function_weight":args.function_weight,
+        "function_semantic_inference_weight":args.function_inference_weight,
+        "function_semantic_inference_rows":function_inference_rows,
         "function_semantic_generic_weight":args.function_generic_weight,
         "function_semantic_nonfunction_replay_weight":args.nonfunction_replay_weight,
         "function_semantic_generic_rows":function_generic_rows,
