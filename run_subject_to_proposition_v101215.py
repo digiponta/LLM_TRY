@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.15 Subject-to-Proposition training regression."""
+"""LLM_TRY v10.12.15.1 Balanced Subject-to-Proposition regression."""
 
 from __future__ import annotations
 
@@ -19,13 +19,12 @@ def training_rows(subject: str, answer: str, weight: int) -> list[tuple[str, str
     rows = []
     for _ in range(max(1, weight)):
         rows.append((f"{subject} =>", answer))
-        rows.append((mapping(subject, answer), answer))
     return rows
 
 
 def main():
     print("=" * 116)
-    print(" LLM_TRY v10.12.15 Subject-to-Proposition Training Regression")
+    print(" LLM_TRY v10.12.15.1 Balanced Subject-to-Proposition Regression")
     print("=" * 116)
 
     subject = "GPU"
@@ -34,16 +33,16 @@ def main():
 
     check("canonical-mapping", mapped == "GPU => GPUは高速である。", mapped)
 
-    rows = training_rows(subject, answer, 3)
-    check("mapping-row-count", len(rows) == 6, str(len(rows)))
+    rows = training_rows(subject, answer, 1)
+    check("mapping-row-count", len(rows) == 1, str(len(rows)))
     check("lookup-prompt-present", ("GPU =>", answer) in rows)
-    check("full-mapping-prompt-present", (mapped, answer) in rows)
+    check("full-mapping-not-fed-as-input", (mapped, answer) not in rows)
     check("target-is-full-proposition", all(y == answer for _, y in rows))
 
     print()
     print("Subject mapping       : PASS")
     print("Full proposition      : PASS")
-    print("Training integration  : PASS")
+    print("Balanced integration  : PASS")
     print("STATUS                : SUBJECT_TO_PROPOSITION_TRAINING_PASS")
 
 
