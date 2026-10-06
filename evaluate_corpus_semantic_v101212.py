@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.12 Corpus-to-Semantic Knowledge Evaluation."""
+"""LLM_TRY v10.12.15.1 Balanced Subject-to-Proposition Evaluation."""
 
 from __future__ import annotations
 
@@ -115,7 +115,11 @@ def main():
 
     persona=gen(after,tok,"あなたは誰ですか").strip().rstrip("。")=="長門有希"
     meta=ack.get("metadata",{}) if isinstance(ack.get("metadata",{}),dict) else {}
-    metadata_ok=meta.get("corpus_semantic_version")=="v10.12.12"
+    metadata_ok=(
+        meta.get("corpus_semantic_version")=="v10.12.15.1"
+        and meta.get("subject_to_proposition_version")=="v10.12.15.1"
+        and int(meta.get("subject_mapping_rows",0))>0
+    )
     retention_ok=all(retention)
     final=general_ok and retention_ok and persona and metadata_ok
 
@@ -135,7 +139,7 @@ def main():
 
     Path(args.report).parent.mkdir(parents=True,exist_ok=True)
     Path(args.report).write_text(json.dumps({
-        "version":"v10.12.12","summary":s,"seen":seen_s,"unseen":unseen_s,
+        "version":"v10.12.15.1","summary":s,"seen":seen_s,"unseen":unseen_s,
         "retention_passed":retention_ok,"persona_passed":persona,
         "metadata_passed":metadata_ok,"status":"PASS" if final else "FAIL"
     },ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
