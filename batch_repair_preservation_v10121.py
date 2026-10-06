@@ -47,15 +47,26 @@ def protected_internalized_records(
     learning_log: Path,
     checkpoint_fingerprints: set[str] | frozenset[str],
     excluded_fingerprints: set[str] | frozenset[str],
+    excluded_concepts: set[str] | frozenset[str] = frozenset(),
 ) -> list[InternalizedRecord]:
-    """Build the pre-repair protected set from checkpoint-bound trusted pairs."""
+    """Build concept-level pre-repair protected INTERNALIZED baseline.
+
+    Repair targets are excluded by concept, not only by one teaching
+    fingerprint. For the remaining concepts, keep the latest checkpoint-bound
+    trusted record, matching normal INTERNALIZED runtime semantics.
+    """
     if not learning_log.exists():
         return []
 
     bound = {str(x) for x in checkpoint_fingerprints}
     excluded = {str(x) for x in excluded_fingerprints}
-    records: list[InternalizedRecord] = []
-    seen: set[tuple[str, str]] = set()
+    excluded_names = {
+        str(x).strip().lower()
+        for x in excluded_concepts
+        if str(x).strip()
+    }
+
+    latest_by_concept: dict[str, InternalizedRecord] = {}
 
     for raw in learning_log.read_text(encoding="utf-8").splitlines():
         if not raw.strip():
@@ -82,22 +93,21 @@ def protected_internalized_records(
         if not concept:
             continue
 
-        key = (concept.lower(), fp)
-        if key in seen:
+        key = concept.strip().lower()
+        if key in excluded_names:
             continue
-        seen.add(key)
-        records.append(
-            InternalizedRecord(
-                concept=concept,
-                question=question,
-                teacher_answer=teacher,
-                fingerprint=fp,
-                source=source,
-                timestamp=str(row.get("timestamp", "")).strip(),
-            )
+
+        # Assignment in log order deliberately keeps the latest trusted row.
+        latest_by_concept[key] = InternalizedRecord(
+            concept=concept,
+            question=question,
+            teacher_answer=teacher,
+            fingerprint=fp,
+            source=source,
+            timestamp=str(row.get("timestamp", "")).strip(),
         )
 
-    return records
+    return list(latest_by_concept.values())
 
 
 def append_preservation_audit(
