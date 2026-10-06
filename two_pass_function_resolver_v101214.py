@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.14 Two-Pass Function Semantic Resolver.
+"""LLM_TRY v10.12.14.1 Multi-Probe Two-Pass Function Semantic Resolver.
 
 Pass 1:
     Generate ordinary subject knowledge from the current production model.
@@ -34,6 +34,8 @@ class TwoPassFunctionResult:
     compose_prompt: str
     answer: str
     used_fallback: bool
+    evidence_queries: tuple[str, ...] = ()
+    evidence_items: tuple[str, ...] = ()
 
 
 def extract_structure_from_evidence(
@@ -58,11 +60,24 @@ def extract_structure_from_evidence(
 
 
 def function_evidence_query(subject: str) -> str:
-    """Pass-1 query: intentionally ordinary and structure-free."""
+    """Backward-compatible primary Pass-1 query."""
+    return function_evidence_queries(subject)[0]
+
+
+def function_evidence_queries(subject: str) -> tuple[str, ...]:
+    """Leakage-free evidence probes.
+
+    These prompts mention only the subject and the generic notion of role or
+    behavior. They never include teacher answers or gold function slots.
+    """
     subject_n = normalize(subject)
     if not subject_n:
         raise ValueError("subject must be non-empty")
-    return f"{subject_n}とは"
+    return (
+        f"{subject_n}とは",
+        f"{subject_n}は何をするものですか",
+        f"{subject_n}の役割は何ですか",
+    )
 
 
 def function_compose_prompt(
@@ -139,11 +154,21 @@ def resolve_two_pass_function(
     generate(query) must return text from the current model. malformed
     optionally accepts generated text and returns True for unusable output.
     """
-    evidence_query = function_evidence_query(subject)
-    evidence = normalize(generate(evidence_query))
-    if not evidence:
-        raise RuntimeError("Pass-1 evidence generation returned empty text")
+    queries = function_evidence_queries(subject)
+    evidence_items: list[str] = []
+    for query in queries:
+        generated = normalize(generate(query))
+        if not generated:
+            continue
+        if malformed is not None and malformed(generated):
+            continue
+        if generated not in evidence_items:
+            evidence_items.append(generated)
 
+    if not evidence_items:
+        raise RuntimeError("Pass-1 evidence generation returned no usable text")
+
+    evidence = " / ".join(evidence_items)
     structure = extract_structure_from_evidence(subject, evidence)
     compose_prompt = function_compose_prompt(subject, evidence, structure)
     composed = normalize(generate(compose_prompt))
@@ -166,4 +191,6 @@ def resolve_two_pass_function(
         compose_prompt=compose_prompt,
         answer=answer,
         used_fallback=used_fallback,
+        evidence_queries=queries,
+        evidence_items=tuple(evidence_items),
     )
