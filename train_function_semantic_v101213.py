@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""LLM_TRY v10.12.13 Function Semantic Decomposition Training."""
+"""LLM_TRY v10.12.13.1 Preservation-Balanced Function Semantic Training."""
 
 from __future__ import annotations
 
@@ -30,11 +30,13 @@ def parse_args():
     p.add_argument("--base-model", default="model/model-gpu-v1.6.2-online.pt")
     p.add_argument("--output", default="model/model-gpu-v1.6.2-online-function-semantic-candidate.pt")
     p.add_argument("--learning-log", default="data/chat_history.jsonl")
-    p.add_argument("--epochs", type=int, default=6)
-    p.add_argument("--learning-rate", type=float, default=4e-6)
+    p.add_argument("--epochs", type=int, default=4)
+    p.add_argument("--learning-rate", type=float, default=2e-6)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--freeze-blocks", type=int, default=2)
-    p.add_argument("--function-weight", type=int, default=4)
+    p.add_argument("--function-weight", type=int, default=2)
+    p.add_argument("--function-generic-weight", type=int, default=3)
+    p.add_argument("--nonfunction-replay-weight", type=int, default=2)
     p.add_argument("--preservation-weight", type=int, default=2)
     p.add_argument("--grad-clip", type=float, default=0.5)
     return p.parse_args()
@@ -50,11 +52,22 @@ def main():
     pairs=[]
     function_items=[x for x in items if x.relation=="function"]
 
-    # Keep one normal semantic exposure for every proposition so prior semantic
-    # behavior is refreshed, while heavily emphasizing decomposed function rows.
+    # Base refresh: keep the three established query forms for every proposition.
     for item in items:
         for q in training_queries(item):
             pairs.append((q,item.answer))
+
+    # v10.12.13.1: preservation-balanced replay.
+    # Function structure is useful, but v10.12.13 showed that over-weighting it
+    # can damage the older generic function representation.  Replay the generic
+    # semantic/compact function prompts at comparable or greater weight.
+    function_generic_rows=0
+    for item in function_items:
+        generic_queries=training_queries(item)[1:]
+        for _ in range(max(0,args.function_generic_weight)):
+            for q in generic_queries:
+                pairs.append((q,item.answer))
+                function_generic_rows += 1
 
     function_struct_rows=0
     for item in function_items:
@@ -62,6 +75,18 @@ def main():
             for q in function_training_queries(item):
                 pairs.append((q,item.answer))
                 function_struct_rows += 1
+
+    # Explicit non-function semantic replay prevents a surgical function update
+    # from eroding the semantic space learned by v10.12.12.
+    nonfunction_replay_rows=0
+    for item in items:
+        if item.relation=="function":
+            continue
+        semantic_queries=training_queries(item)[1:]
+        for _ in range(max(0,args.nonfunction_replay_weight)):
+            for q in semantic_queries:
+                pairs.append((q,item.answer))
+                nonfunction_replay_rows += 1
 
     protected=protected_internalized_records(
         Path(args.learning_log),
@@ -86,7 +111,7 @@ def main():
     optimizer=torch.optim.AdamW(trainable,lr=args.learning_rate,weight_decay=0.01)
 
     print("="*116)
-    print(" LLM_TRY v10.12.13 Function Semantic Decomposition Training")
+    print(" LLM_TRY v10.12.13.1 Preservation-Balanced Function Semantic Training")
     print("="*116)
     print("Device                :",device)
     if device.type=="cuda":
@@ -94,8 +119,12 @@ def main():
     print("Base model            :",args.base_model)
     print("Total propositions    :",len(items))
     print("Function propositions :",len(function_items))
-    print("Function weight       :",args.function_weight)
+    print("Function struct weight:",args.function_weight)
+    print("Function generic wt.  :",args.function_generic_weight)
+    print("Non-function replay wt:",args.nonfunction_replay_weight)
+    print("Function generic rows :",function_generic_rows)
     print("Function struct rows  :",function_struct_rows)
+    print("Nonfunction replay rows:",nonfunction_replay_rows)
     print("Protected concepts    :",len(protected))
     print("Preservation rows     :",preservation_rows)
     print("Total train rows      :",len(pairs))
@@ -132,10 +161,15 @@ def main():
     metadata=checkpoint.get("metadata",{})
     metadata=dict(metadata) if isinstance(metadata,dict) else {}
     metadata.update({
-        "function_semantic_version":"v10.12.13",
+        "function_semantic_version":"v10.12.13.1",
+        "function_semantic_parent_version":"v10.12.13",
         "function_semantic_train":args.train,
         "function_semantic_function_count":len(function_items),
         "function_semantic_function_weight":args.function_weight,
+        "function_semantic_generic_weight":args.function_generic_weight,
+        "function_semantic_nonfunction_replay_weight":args.nonfunction_replay_weight,
+        "function_semantic_generic_rows":function_generic_rows,
+        "function_semantic_nonfunction_replay_rows":nonfunction_replay_rows,
         "function_semantic_struct_rows":function_struct_rows,
         "function_semantic_preservation_weight":args.preservation_weight,
         "function_semantic_best_epoch":best_epoch,
