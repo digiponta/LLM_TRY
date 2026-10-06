@@ -148,7 +148,7 @@ def main() -> None:
     after_model, after_ckpt = LanguageModel.load_checkpoint(args.after, device=device)
 
     print("=" * 116)
-    print(" LLM_TRY v10.12.10 Semantic Role Generalization Evaluation")
+    print(" LLM_TRY v10.12.10.1 Preservation-Aware Semantic Role Evaluation")
     print("=" * 116)
     print("Device              :", device)
     if device.type == "cuda":
@@ -236,7 +236,7 @@ def main() -> None:
     metadata = after_ckpt.get("metadata", {})
     if not isinstance(metadata, dict):
         metadata = {}
-    metadata_ok = metadata.get("semantic_role_version") == "v10.12.10"
+    metadata_ok = metadata.get("semantic_role_version") == "v10.12.10.1"
 
     final_ok = seen_ok and unseen_ok and retention_ok and metadata_ok
 
@@ -254,7 +254,7 @@ def main() -> None:
     )
 
     report = {
-        "version": "v10.12.10",
+        "version": "v10.12.10.1",
         "before": args.before,
         "after": args.after,
         "seen_role_results": seen_results,
