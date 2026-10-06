@@ -16,8 +16,10 @@ from __future__ import annotations
 import argparse
 import math
 import random
+import json
 import shutil
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import List, Sequence, Tuple
 
@@ -82,11 +84,21 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--baseline-dir",
+        default="model/baselines",
+        help="Directory for timestamped pre-Nagato baseline snapshots.",
+    )
+    p.add_argument(
+        "--baseline-manifest",
+        default="model/baselines/nagato_baseline_latest.json",
+        help="Manifest pointing to the latest timestamped pre-Nagato baseline.",
+    )
+    p.add_argument(
         "--baseline-snapshot",
         default="model/model-gpu-v1.6.2-online-pre-nagato.pt",
         help=(
-            "Persistent copy of the pre-Nagato base checkpoint for "
-            "v10.12.6 before/after evaluation. Existing snapshots are kept."
+            "Compatibility baseline path. Created only if absent; timestamped "
+            "snapshots in --baseline-dir are the authoritative per-run baselines."
         ),
     )
     return p.parse_args()
@@ -223,19 +235,44 @@ def main() -> None:
     if not base_path.exists():
         raise FileNotFoundError(f"Base model not found: {base_path}")
 
+    # v10.12.11.1: create an immutable per-run baseline before every
+    # continued-pretraining run. The timestamp includes microseconds so repeated
+    # launches within the same second cannot overwrite one another.
+    snapshot_dir = Path(args.baseline_dir)
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    timestamped_baseline = (
+        snapshot_dir
+        / f"model-gpu-v1.6.2-online-pre-nagato-{snapshot_stamp}.pt"
+    )
+    shutil.copy2(base_path, timestamped_baseline)
+
+    manifest_path = Path(args.baseline_manifest)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "version": "v10.12.11.1",
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "base_model": str(base_path),
+        "snapshot": str(timestamped_baseline),
+        "candidate_output": str(output_path),
+        "data": str(data_path),
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(f"[timestamped pre-Nagato baseline created: {timestamped_baseline}]")
+    print(f"[latest baseline manifest updated: {manifest_path}]")
+
+    # Preserve the historical fixed path for scripts/users that still reference
+    # it. It is never overwritten automatically.
     baseline_snapshot = Path(args.baseline_snapshot)
     if not baseline_snapshot.exists():
         baseline_snapshot.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(base_path, baseline_snapshot)
-        print(
-            f"[pre-Nagato baseline snapshot created: "
-            f"{baseline_snapshot}]"
-        )
+        print(f"[compatibility baseline created: {baseline_snapshot}]")
     else:
-        print(
-            f"[pre-Nagato baseline snapshot retained: "
-            f"{baseline_snapshot}]"
-        )
+        print(f"[compatibility baseline retained: {baseline_snapshot}]")
 
     tokenizer = Tokenizer.load(str(tokenizer_path))
     model, checkpoint = LanguageModel.load_checkpoint(
@@ -312,7 +349,7 @@ def main() -> None:
     )
 
     print("=" * 76)
-    print(" LLM_TRY v10.12.4 Moderate data-nagato.txt Continued Pretraining")
+    print(" LLM_TRY v10.12.11.1 Timestamped Baseline + Moderate data-nagato Retraining")
     print("=" * 76)
     print("Device          :", device)
     if device.type == "cuda":
@@ -418,6 +455,7 @@ def main() -> None:
     metadata = dict(inherited_metadata)
     metadata.update({
         "nagato_moderate_version": "v10.12.4",
+        "nagato_retraining_version": "v10.12.11.1",
         "nagato_moderate_data": str(data_path),
         "nagato_moderate_epochs": best_epoch,
         "nagato_moderate_learning_rate": args.learning_rate,
@@ -426,7 +464,9 @@ def main() -> None:
         "nagato_moderate_validation_ratio": args.validation_ratio,
         "nagato_moderate_frozen_blocks": freeze_blocks,
         "nagato_moderate_base_model": str(base_path),
-        "nagato_moderate_baseline_snapshot": str(baseline_snapshot),
+        "nagato_moderate_baseline_snapshot": str(timestamped_baseline),
+        "nagato_moderate_compatibility_baseline": str(baseline_snapshot),
+        "nagato_moderate_baseline_manifest": str(manifest_path),
     })
 
     model.save_checkpoint(
