@@ -148,7 +148,7 @@ def main() -> None:
     after_model, after_ckpt = LanguageModel.load_checkpoint(args.after, device=device)
 
     print("=" * 116)
-    print(" LLM_TRY v10.12.10.1 Preservation-Aware Semantic Role Evaluation")
+    print(" LLM_TRY v10.12.11 Role-Balanced Semantic Evaluation")
     print("=" * 116)
     print("Device              :", device)
     if device.type == "cuda":
@@ -178,6 +178,24 @@ def main() -> None:
     seen_results, seen_gain, seen_imp, seen_same, seen_reg = seen
     unseen_results, unseen_gain, unseen_imp, unseen_same, unseen_reg = unseen
 
+    def relation_summary(rows):
+        grouped = {}
+        for row in rows:
+            grouped.setdefault(row["relation"], []).append(row["gain"])
+        return {
+            relation: {
+                "count": len(values),
+                "mean_gain": sum(values) / len(values),
+                "improved": sum(1 for x in values if x > 1e-6),
+                "same": sum(1 for x in values if abs(x) <= 1e-6),
+                "regressed": sum(1 for x in values if x < -1e-6),
+            }
+            for relation, values in sorted(grouped.items())
+        }
+
+    seen_by_relation = relation_summary(seen_results)
+    unseen_by_relation = relation_summary(unseen_results)
+
     seen_ok = seen_gain >= args.min_seen_role_gain and seen_imp > seen_reg
     unseen_ok = unseen_gain >= args.min_unseen_role_gain and unseen_imp >= unseen_reg
 
@@ -190,6 +208,21 @@ def main() -> None:
     print(f"Unseen-role outcomes  : improved={unseen_imp} same={unseen_same} regressed={unseen_reg}")
     print("Seen-role status      :", "PASS" if seen_ok else "FAIL")
     print("Unseen-role status    :", "PASS" if unseen_ok else "FAIL")
+    print()
+    print("Per-relation gains")
+    print("------------------")
+    for relation, stats in seen_by_relation.items():
+        print(
+            f"seen/{relation:<10} count={stats['count']:2d} "
+            f"mean={stats['mean_gain']:+.3f} "
+            f"improved={stats['improved']} regressed={stats['regressed']}"
+        )
+    for relation, stats in unseen_by_relation.items():
+        print(
+            f"unseen/{relation:<8} count={stats['count']:2d} "
+            f"mean={stats['mean_gain']:+.3f} "
+            f"improved={stats['improved']} regressed={stats['regressed']}"
+        )
 
     fp = set(checkpoint_trained_fingerprints(after_ckpt))
     protected = protected_internalized_records(
@@ -236,7 +269,7 @@ def main() -> None:
     metadata = after_ckpt.get("metadata", {})
     if not isinstance(metadata, dict):
         metadata = {}
-    metadata_ok = metadata.get("semantic_role_version") == "v10.12.10.1"
+    metadata_ok = metadata.get("semantic_role_version") == "v10.12.11"
 
     final_ok = seen_ok and unseen_ok and retention_ok and metadata_ok
 
@@ -254,7 +287,7 @@ def main() -> None:
     )
 
     report = {
-        "version": "v10.12.10.1",
+        "version": "v10.12.11",
         "before": args.before,
         "after": args.after,
         "seen_role_results": seen_results,
@@ -264,11 +297,13 @@ def main() -> None:
         "seen_role_same": seen_same,
         "seen_role_regressed": seen_reg,
         "seen_role_passed": seen_ok,
+        "seen_relation_summary": seen_by_relation,
         "unseen_role_mean_gain": unseen_gain,
         "unseen_role_improved": unseen_imp,
         "unseen_role_same": unseen_same,
         "unseen_role_regressed": unseen_reg,
         "unseen_role_passed": unseen_ok,
+        "unseen_relation_summary": unseen_by_relation,
         "retention": retention,
         "retention_passed": retention_ok,
         "persona_answer": identity,
