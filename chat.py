@@ -2062,6 +2062,7 @@ def classify_daily_conversation(text: str) -> str:
         "疲れた", "疲れ", "眠い", "眠", "嬉しい", "うれしい", "悲しい", "寂しい",
         "さみしい", "楽しい", "つらい", "しんどい", "退屈", "暇",
         "緊張", "不安", "困った", "困って", "面白い", "おもしろい",
+        "いい気分", "気分がいい", "気分いい",
     )
     if any(x in q for x in feeling_patterns):
         return "feeling"
@@ -2126,8 +2127,11 @@ def daily_chat_expected_terms(kind: str, user_text: str) -> tuple[str, ...]:
             return ("休", "疲", "そう")
         if "眠" in q:
             return ("眠", "休")
-        if "嬉" in q or "うれ" in q or "楽し" in q:
-            return ("良", "嬉", "楽し")
+        if (
+            "嬉" in q or "うれ" in q or "楽し" in q
+            or "いい気分" in q or "気分がいい" in q or "気分いい" in q
+        ):
+            return ("良", "嬉", "楽し", "気分")
         if "悲" in q or "寂" in q or "さみ" in q:
             return ("聞", "そう", "話")
         if "不安" in q or "緊張" in q:
@@ -2193,7 +2197,10 @@ def daily_chat_fallback(kind: str, user_text: str) -> str:
             return "そう。今日は少し休んだ方がいいと思う。"
         if "眠" in q:
             return "眠いなら、少し休んだ方がいい。"
-        if "嬉し" in q or "うれし" in q:
+        if (
+            "嬉し" in q or "うれし" in q
+            or "いい気分" in q or "気分がいい" in q or "気分いい" in q
+        ):
             return "それは良かった。"
         if "楽し" in q:
             return "楽しそう。"
