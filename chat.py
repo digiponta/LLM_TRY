@@ -129,6 +129,12 @@ from semantic_sleep_learning_v10131 import (
 from modifier_condition_normalization_v10160 import (
     normalize_modifier_condition_text,
 )
+from conditional_semantic_v10161 import (
+    add_conditional_statement,
+    answer_conditional_query,
+    load_conditional_propositions,
+    parse_conditional_query,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -145,6 +151,7 @@ DEFAULT_ONLINE_TRAINER = "online_train.py"
 DEFAULT_RAW_KNOWLEDGE_CORPUS = "data/data-nagato.txt"
 DEFAULT_SEMANTIC_KNOWLEDGE = "data/unified_semantic_memory_v1090.jsonl"
 DEFAULT_PROPOSITION_STORE = "data/semantic_propositions_v1090.jsonl"
+DEFAULT_CONDITIONAL_PROPOSITION_STORE = "data/conditional_propositions_v10161.jsonl"
 DEFAULT_SUBJECT_INDEX = "data/subject_keyed_propositions_v1090.jsonl"
 DEFAULT_TYPED_SUBJECT_INDEX = "data/typed_subject_propositions_v10100.jsonl"
 DEFAULT_CORPUS_MEMORY = "data/subject_keyed_corpus_memory_v101216.jsonl"
@@ -244,6 +251,11 @@ def parse_args() -> argparse.Namespace:
         "--propositions",
         default=DEFAULT_PROPOSITION_STORE,
         help="Persistent atomic semantic proposition store.",
+    )
+    parser.add_argument(
+        "--conditional-propositions",
+        default=DEFAULT_CONDITIONAL_PROPOSITION_STORE,
+        help="Persistent v10.16.1 conditional semantic proposition store.",
     )
     parser.add_argument(
         "--subject-index",
@@ -1934,17 +1946,17 @@ RUNTIME_TRAILING_PUNCTUATION = "、，,。．.!！?？:：;；"
 def normalize_runtime_input(text: str) -> str:
     """Normalize runtime input before semantic routing.
 
-    v10.16 keeps the established NFKC / trailing-punctuation cleanup and then
-    applies conservative Modifier-to-Condition normalization.
-
-    Example:
-        高温のCPUは停止する
-            -> CPUは、高温の場合、停止する
-
-    Attribute/ownership phrases that are not proven conditional remain intact.
+    v10.16.1 first recognizes conditional *questions* so they cannot be
+    misparsed as declarative modifier statements. Declarative inputs then use
+    the v10.16 Modifier-to-Condition normalizer.
     """
     normalized = unicodedata.normalize("NFKC", text).strip()
     normalized = normalized.rstrip(RUNTIME_TRAILING_PUNCTUATION).strip()
+
+    conditional_query = parse_conditional_query(normalized)
+    if conditional_query.matched:
+        return conditional_query.normalized
+
     return normalize_modifier_condition_text(normalized)
 
 
@@ -3145,6 +3157,8 @@ def main() -> None:
     print("  /batchstatus  show verification-aware batch repair plan")
     print("  /maintain     recover the previous question from trusted teaching data")
     print("  /maintain all recover all pending trusted teaching candidates")
+    print("  /condteach S  persist conditional semantic proposition statement")
+    print("  /conds        list conditional semantic propositions")
     print("  /propteach S  decompose and persist semantic proposition statement")
     print("  /prop X       compose stored propositions for subject X")
     print("  /props        list atomic semantic propositions")
@@ -3174,6 +3188,9 @@ def main() -> None:
     learning_log = Path(args.learning_log)
     learning_state = Path(args.learning_state)
     proposition_path = resolve_runtime_path(args.propositions)
+    conditional_proposition_path = resolve_runtime_path(
+        args.conditional_propositions
+    )
     unified_semantic_path = resolve_runtime_path(DEFAULT_SEMANTIC_KNOWLEDGE)
     subject_index_path = resolve_runtime_path(args.subject_index)
     typed_subject_index_path = resolve_runtime_path(
@@ -3316,6 +3333,47 @@ def main() -> None:
                 f"pairs={learning_log_count(learning_log)}, "
                 f"log={learning_log}]"
             )
+            print()
+            continue
+
+        if command == "/conds":
+            rows = load_conditional_propositions(
+                conditional_proposition_path
+            )
+            if not rows:
+                print("[conditional propositions: empty]")
+            else:
+                print(
+                    f"[conditional propositions: {len(rows)} item(s)]"
+                )
+                for index, row in enumerate(rows, 1):
+                    print(
+                        f"  {index:02d}. subject={row.subject!r} "
+                        f"condition={row.condition!r} "
+                        f"predicate={row.predicate!r}"
+                    )
+            print()
+            continue
+
+        if command.startswith("/condteach "):
+            statement = user_text[len("/condteach "):].strip()
+            row = add_conditional_statement(
+                conditional_proposition_path,
+                statement,
+            )
+            if row is None:
+                print(
+                    "[conditional teaching rejected: expected a "
+                    "condition-like statement such as 高温のCPUは停止する]"
+                )
+            else:
+                print(
+                    f"[conditional knowledge saved: "
+                    f"subject={row.subject!r}, "
+                    f"condition={row.condition!r}, "
+                    f"predicate={row.predicate!r}]"
+                )
+                print(f"[canonical: {row.render()}]")
             print()
             continue
 
@@ -4510,6 +4568,32 @@ def main() -> None:
             print()
             last_ai_reply = None
             continue
+
+        # v10.16.1 Conditional Semantic Retrieval.
+        conditional_query, conditional_answer = answer_conditional_query(
+            conditional_proposition_path,
+            user_text,
+        )
+        if conditional_query.matched:
+            if conditional_answer:
+                print(f"AI> {conditional_answer}")
+                print(
+                    f"[conditional-retrieval=HIT, "
+                    f"subject={conditional_query.subject!r}, "
+                    f"condition={conditional_query.condition!r}, "
+                    f"route=conditional-semantic-v10.16.1]"
+                )
+                print("[0 generated probe tokens, conditional semantic retrieval]")
+                print()
+                history.append((user_text, conditional_answer))
+                last_ai_reply = conditional_answer
+                continue
+            else:
+                print(
+                    f"[conditional-retrieval=MISS, "
+                    f"subject={conditional_query.subject!r}, "
+                    f"condition={conditional_query.condition!r}]"
+                )
 
         # v10.12.16.1 Retrieval-First Runtime.
         # Exact Subject-Keyed Corpus Memory lookup precedes UNKNOWN/generation
