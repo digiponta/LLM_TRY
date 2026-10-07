@@ -3305,6 +3305,7 @@ def main() -> None:
         if not user_text:
             continue
 
+        raw_user_text = user_text
         normalized_user_text = normalize_runtime_input(user_text)
         if normalized_user_text and normalized_user_text != user_text:
             print(f"[normalized input: {user_text!r} -> {normalized_user_text!r}]")
@@ -4626,13 +4627,21 @@ def main() -> None:
         last_user_text = user_text
         internalized_record = None
 
-        # v10.16.3 Auto-detect declarative conditional knowledge.
-        # It is queued as a candidate, never trusted automatically.
-        conditional_statement = parse_conditional_statement(user_text)
+        # v10.16.4 Auto-detect declarative conditional knowledge from
+        # the RAW input, not from the normalized query surface. This prevents
+        # questions such as "CPUが高温のときは?" from becoming
+        # predicate="どうなる" candidates after normalization.
+        raw_conditional_query = parse_conditional_query(raw_user_text)
+        conditional_statement = (
+            None
+            if raw_conditional_query.matched
+            else parse_conditional_statement(raw_user_text)
+        )
         if conditional_statement is not None:
             queued_candidate, row = queue_conditional_candidate(
                 conditional_candidate_path,
-                user_text,
+                raw_user_text,
+                proposition_path=conditional_proposition_path,
             )
             if queued_candidate:
                 print(
@@ -4642,16 +4651,40 @@ def main() -> None:
                     f"predicate={row.predicate!r}]"
                 )
                 print("[review with /condcandidates, approve with /condapprove N or /condapprove all]")
+                print("[0 generated probe tokens, candidate capture]")
+                print()
+                last_ai_reply = None
+                continue
+
+            # Existing approved facts are not re-queued; allow normal runtime
+            # processing to continue rather than swallowing the input.
+            stored_match = any(
+                stored.subject == conditional_statement.subject
+                and stored.condition == conditional_statement.condition
+                and stored.predicate == conditional_statement.predicate
+                and stored.condition_polarity
+                    == conditional_statement.condition_polarity
+                for stored in load_conditional_propositions(
+                    conditional_proposition_path
+                )
+            )
+            if stored_match:
+                print(
+                    f"[conditional candidate skipped: already stored, "
+                    f"subject={conditional_statement.subject!r}, "
+                    f"condition={conditional_statement.condition!r}, "
+                    f"predicate={conditional_statement.predicate!r}]"
+                )
             else:
                 print(
                     f"[conditional candidate already pending: "
                     f"subject={conditional_statement.subject!r}, "
                     f"condition={conditional_statement.condition!r}]"
                 )
-            print("[0 generated probe tokens, candidate capture]")
-            print()
-            last_ai_reply = None
-            continue
+                print("[0 generated probe tokens, candidate capture]")
+                print()
+                last_ai_reply = None
+                continue
 
         input_ok, input_reason = input_quality_check(user_text)
         if not input_ok:
