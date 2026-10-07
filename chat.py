@@ -2014,6 +2014,145 @@ def classify_intent_and_slots(question: str) -> tuple[str, list[str]]:
     return "general", []
 
 
+def classify_daily_conversation(text: str) -> str:
+    """Classify lightweight conversational turns that should bypass knowledge gating.
+
+    The classifier is deliberately conservative: explicit knowledge requests,
+    concept queries, comparisons, and how/why questions remain on the Semantic
+    Runtime path.
+    """
+    q = text.strip()
+    q_lower = q.lower()
+
+    if not q:
+        return ""
+
+    knowledge_markers = (
+        "とは", "について", "説明して", "説明してください", "教えて",
+        "なぜ", "どうして", "理由", "比較", "違い", "差は",
+        "使い方", "方法", "どうやって", "何ですか", "何とは",
+    )
+    if any(marker in q for marker in knowledge_markers):
+        return ""
+
+    if extract_concept_query_focus(q) or extract_bare_concept_focus(q):
+        return ""
+
+    greeting_patterns = (
+        "こんにちは", "こんばんは", "おはよう", "おやすみ", "ただいま",
+        "いってきます", "はじめまして", "やあ", "hello", "hi",
+    )
+    if any(x in q_lower for x in greeting_patterns):
+        return "greeting"
+
+    acknowledgement_patterns = (
+        "なるほど", "そうなんだ", "そうですね", "そうだね", "わかった",
+        "了解", "ありがとう", "ありがと", "うん", "はい", "へえ", "ほう",
+    )
+    if len(q) <= 24 and any(x in q_lower for x in acknowledgement_patterns):
+        return "acknowledgement"
+
+    feeling_patterns = (
+        "疲れた", "眠い", "嬉しい", "うれしい", "悲しい", "寂しい",
+        "さみしい", "楽しい", "つらい", "しんどい", "退屈", "暇",
+        "緊張", "不安", "困った", "困って", "面白い", "おもしろい",
+    )
+    if any(x in q for x in feeling_patterns):
+        return "feeling"
+
+    casual_patterns = (
+        "どう思う", "どうかな", "どうだろう", "元気", "何してる",
+        "話そう", "雑談", "今日は", "最近", "今何して", "好きですか",
+        "好き？", "好きかな",
+    )
+    if any(x in q for x in casual_patterns):
+        return "casual"
+
+    identity_patterns = (
+        "あなたは誰", "名前は", "君は誰", "長門有希", "長門",
+    )
+    if any(x in q for x in identity_patterns):
+        return "persona"
+
+    return ""
+
+
+def daily_chat_fallback(kind: str, user_text: str) -> str:
+    """Stable fallback when the small model cannot produce a clean casual reply."""
+    if kind == "greeting":
+        if "おやすみ" in user_text:
+            return "おやすみなさい。"
+        if "おはよう" in user_text:
+            return "おはようございます。"
+        if "こんばんは" in user_text:
+            return "こんばんは。"
+        return "こんにちは。"
+    if kind == "acknowledgement":
+        if "ありがとう" in user_text or "ありがと" in user_text:
+            return "どういたしまして。"
+        return "うん。"
+    if kind == "feeling":
+        if "疲れ" in user_text or "しんど" in user_text:
+            return "そう。今日は少し休んだ方がいいかもしれない。"
+        if "眠" in user_text:
+            return "眠いなら、少し休むのがいいと思う。"
+        if "嬉し" in user_text or "うれし" in user_text or "楽し" in user_text:
+            return "それは良かった。"
+        if "悲し" in user_text or "寂し" in user_text or "さみし" in user_text:
+            return "そうなんだ。話したければ、聞く。"
+        return "そうなんだ。"
+    if kind == "persona":
+        return "長門有希。"
+    return "うん。もう少し話して。"
+
+
+def generate_daily_chat_reply(
+    *,
+    model: LanguageModel,
+    tokenizer: Tokenizer,
+    history: List[Tuple[str, str]],
+    user_text: str,
+    kind: str,
+    history_turns: int,
+    max_new_tokens: int,
+    temperature: float,
+    top_k: int,
+    repetition_penalty: float,
+    min_token_confidence: float,
+) -> GenerationResult:
+    """Generate casual conversation with a relaxed, quality-only gate."""
+    prompt, _ = build_prompt(
+        history=history,
+        user_text=normalize_identity_query(user_text),
+        history_turns=history_turns,
+    )
+    result = generate_reply(
+        model=model,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_new_tokens=max_new_tokens,
+        temperature=max(0.35, temperature),
+        top_k=top_k,
+        repetition_penalty=repetition_penalty,
+        seed=0,
+    )
+
+    bad = malformed_or_unstable(result.text)
+    if result.text and result.min_confidence < max(0.005, min_token_confidence * 0.50):
+        bad = True
+
+    if bad:
+        fallback = daily_chat_fallback(kind, user_text)
+        return GenerationResult(
+            text=fallback,
+            token_count=0,
+            mean_confidence=result.mean_confidence,
+            min_confidence=result.min_confidence,
+            mean_top2_margin=result.mean_top2_margin,
+        )
+    return result
+
+
 def greeting_consistent(answer: str) -> bool:
     a = answer.lower()
     greeting_terms = (
@@ -2800,7 +2939,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.13.0 Semantic Knowledge Runtime Stable")
+    print(" LLM_TRY Chat - v10.14 Daily Conversation Runtime")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -3130,6 +3269,7 @@ def main() -> None:
     print("  /good         approve and save the previous AI answer for learning")
     print("  /train        run incremental training and reload checkpoint")
     print("  /sleep        internalize pending Nagato Semantic Memory into the LLM")
+    print("  daily chat    greetings/feelings/small-talk use relaxed conversation route")
     print("  /sleep status show Semantic Memory / internalized / pending counts")
     print("  /trainbatch   batch-train all active verification repair tasks")
     print("  /batchstatus  show verification-aware batch repair plan")
@@ -4499,6 +4639,51 @@ def main() -> None:
             print("[0 generated probe tokens, 0.00s, 0.0 tok/s]")
             print()
             last_ai_reply = None
+            continue
+
+        # v10.14 Daily Conversation Runtime.
+        # Lightweight conversational turns bypass semantic knowledge rejection,
+        # while explicit knowledge questions continue through the existing
+        # Retrieval / Truth / Unknown architecture.
+        daily_kind = classify_daily_conversation(user_text)
+        if daily_kind:
+            daily_start = time.perf_counter()
+            daily = generate_daily_chat_reply(
+                model=model,
+                tokenizer=tokenizer,
+                history=history,
+                user_text=user_text,
+                kind=daily_kind,
+                history_turns=max(3, args.history_turns),
+                max_new_tokens=min(args.max_new_tokens, 64),
+                temperature=args.temperature,
+                top_k=args.top_k,
+                repetition_penalty=args.repetition_penalty,
+                min_token_confidence=args.min_token_confidence,
+            )
+            daily_elapsed = time.perf_counter() - daily_start
+            print(f"AI> {daily.text}")
+            print(
+                f"[daily-chat=ACCEPT, intent={daily_kind}, "
+                "route=CASUAL_CHAT, unknown_gate=bypassed, "
+                f"history_turns={min(len(history), max(3, args.history_turns))}]"
+            )
+            print(
+                f"[{daily.token_count} generated tokens, "
+                f"{daily_elapsed:.2f}s]"
+            )
+            print()
+            history.append((user_text, daily.text))
+            if len(history) > max(8, args.history_turns * 3):
+                history[:] = history[-max(8, args.history_turns * 3):]
+            last_ai_reply = daily.text
+            if learning_enabled:
+                append_learning_pair(
+                    learning_log,
+                    user_text,
+                    daily.text,
+                    source="daily-chat-approved",
+                )
             continue
 
         # v10.12.16.1 Retrieval-First Runtime.
