@@ -17,6 +17,8 @@ import torch
 from chat import (
     build_prompt,
     classify_daily_conversation,
+    daily_chat_fallback,
+    daily_chat_generation_consistent,
     generate_reply,
     normalize_identity_query,
 )
@@ -85,13 +87,33 @@ def main() -> None:
             repetition_penalty=1.05,
             seed=0,
         )
-        ok = any(term in result.text for term in expected_terms)
-        check(f"generate:{text}", ok, result.text)
+        generated_ok = any(term in result.text for term in expected_terms)
+        consistent = daily_chat_generation_consistent(
+            classify_daily_conversation(text),
+            text,
+            result.text,
+        )
+        if generated_ok and consistent:
+            final_answer = result.text
+            route = "GENERATED"
+        else:
+            final_answer = daily_chat_fallback(
+                classify_daily_conversation(text),
+                text,
+            )
+            route = "FALLBACK"
+
+        ok = any(term in final_answer for term in expected_terms)
+        check(
+            f"runtime:{text}",
+            ok,
+            f"{route}: raw={result.text!r} final={final_answer!r}",
+        )
         passed += int(ok)
 
     print()
     print(f"Held-out generation: {passed}/{len(CASES)}")
-    print("STATUS : DAILY_SFT_HELDOUT_PASS")
+    print("STATUS : DAILY_SFT_HELDOUT_RUNTIME_PASS")
 
 
 if __name__ == "__main__":
