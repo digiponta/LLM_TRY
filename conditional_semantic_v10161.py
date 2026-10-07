@@ -241,10 +241,28 @@ def load_conditional_candidates(path: Path) -> list[dict]:
 def queue_conditional_candidate(
     path: Path,
     statement: str,
+    proposition_path: Path | None = None,
 ) -> tuple[bool, ConditionalProposition | None]:
+    # A conditional question must never become a declarative knowledge
+    # candidate, even if another normalization step could make it look like
+    # "subject は condition の場合 predicate".
+    query = parse_conditional_query(statement)
+    if query.matched:
+        return False, None
+
     row = parse_conditional_statement(statement)
     if row is None:
         return False, None
+
+    if proposition_path is not None:
+        for stored in load_conditional_propositions(proposition_path):
+            if (
+                stored.subject == row.subject
+                and stored.condition == row.condition
+                and stored.predicate == row.predicate
+                and stored.condition_polarity == row.condition_polarity
+            ):
+                return False, row
 
     existing = load_conditional_candidates(path)
     key = (row.subject, row.condition, row.predicate)
