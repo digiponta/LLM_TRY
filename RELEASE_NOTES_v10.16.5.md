@@ -1,6 +1,6 @@
 # LLM_TRY v10.16.5 — Conditional Semantic Runtime Stable
 
-v10.16.5 consolidates the v10.16.0-v10.16.4 conditional-semantic work into a stable candidate.
+v10.16.5 is the Stable Release of the v10.16 conditional-semantic series and is merged into `main`.
 
 ## Stable capability
 
@@ -75,6 +75,12 @@ Expected:
 STATUS : CONDITIONAL_SEMANTIC_RUNTIME_STABLE_V10165_PASS
 ~~~
 
-## Release boundary
+## Release status
 
-v10.16.5 is intended as the final stable candidate before merging the conditional-semantic series into `main`.
+- Branch: `v10.16.5`
+- Integrated into: `main`
+- Historical conditional regression: **48/48 PASS**
+- Stable integration checks: **6/6 PASS**
+- Final status: `CONDITIONAL_SEMANTIC_RUNTIME_STABLE_V10165_PASS`
+
+v10.16.5 is the current Stable Release of the Conditional Semantic Runtime.
