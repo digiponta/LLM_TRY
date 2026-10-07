@@ -20,7 +20,7 @@ DEFAULT_DATA = "data/data-nagato.txt"
 DEFAULT_OUTPUT = "data/nagato_gain_probes_v10127.jsonl"
 
 TOPIC_RE = re.compile(
-    r"^\\s*(.{2,80}?)は、?(.{8,160})[。！？!?]?\\s*$"
+    r"^\s*(.{2,80}?)は、?(.{8,160})[。！？!?]?\s*$"
 )
 BARE_SUBJECT_RE = re.compile(
     r"^[一-龯々ァ-ヶーA-Za-z0-9・]{2,24}$"
@@ -97,7 +97,7 @@ def _canonical_subject(
 def sentence_candidates(text: str, args: argparse.Namespace) -> list[dict]:
     raw_sentences = [
         s.strip()
-        for s in re.split(r"(?<=[。！？!?])\\s*|\\r?\\n+", text)
+        for s in re.split(r"(?<=[。！？!?])\s*|\r?\n+", text)
         if s.strip()
     ]
 
