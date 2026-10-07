@@ -1,175 +1,141 @@
-# LLM_TRY v10.16.4 — Raw-Input Conditional Candidate Guard
+# LLM_TRY v10.16.5 — Conditional Semantic Runtime Stable
 
-Fixes false candidate capture caused by detecting candidates after query normalization.
+**Status: Stable candidate — v10.16 conditional-semantic series consolidated after 48/48 component regression cases PASS.**
 
-~~~text
-CPUが高温のときは？
-    -> query (not a candidate)
+v10.16.5 integrates modifier normalization, condition-aware semantic storage/retrieval, guarded candidate capture, command-plane protection, and `/sleep` internalization into one stable runtime path.
 
-CPUは、高温の場合、停止する。
-    -> already stored fact (not re-queued)
-~~~
-
-Candidate detection now uses the original raw input, excludes conditional questions, and checks the approved Conditional Semantic Store before queueing.
-
-Run:
-
-~~~powershell
-python .\verify_conditional_candidate_guard_v10164.py
-~~~
-
-Expected:
+## Stable architecture
 
 ~~~text
-STATUS : RAW_CONDITIONAL_CANDIDATE_GUARD_V10164_PASS
+User Input
+   |
+   +-- Slash command --------------------------> Command Plane
+   |
+   +-- Conditional question
+   |      |
+   |      v
+   |   Query Normalization
+   |      |
+   |      v
+   |   (subject, condition)
+   |      |
+   |      v
+   |   Conditional Semantic Store
+   |      |
+   |      +-- HIT --> deterministic answer
+   |      |            0 generated probe tokens
+   |      |
+   |      +-- MISS --> existing semantic / LLM runtime
+   |
+   +-- Conditional declarative statement
+          |
+          v
+      Candidate Capture
+          |
+          v
+      Human Approval
+          |
+          v
+ Conditional Semantic Store
+          |
+          +--> immediate retrieval
+          |
+          v
+        /sleep
+          |
+          v
+ conditional-semantic-sleep pair
+          |
+          v
+ existing incremental trainer
+          |
+          v
+ LLM internalization
 ~~~
 
-See `RELEASE_NOTES_v10.16.4.md`.
-
----
-# LLM_TRY v10.16.3 — Automatic Conditional Candidate Capture
-
-**Experimental branch: declarative conditional statements are auto-detected and queued for review.**
-
-Example:
+## Canonical examples
 
 ~~~text
 高温のCPUは停止する
-    -> candidate queue
-    -> /condcandidates
-    -> /condapprove 1
-    -> Conditional Semantic Store
-    -> immediate retrieval
-    -> /sleep
-    -> LLM internalization candidate
-~~~
-
-Auto-detected statements are not trusted automatically. Approval is required before retrieval or `/sleep` training.
-
-Commands:
-
-~~~text
-/condcandidates
-/condapprove N
-/condapprove all
-/conds
-/sleep
-~~~
-
-Run:
-
-~~~powershell
-python .\verify_conditional_candidate_v10163.py
-~~~
-
-Expected:
-
-~~~text
-STATUS : CONDITIONAL_CANDIDATE_LIFECYCLE_V10163_PASS
-~~~
-
-See `RELEASE_NOTES_v10.16.3.md`.
-
----
-# LLM_TRY v10.16.2 — Slash-Command Normalization Guard
-
-**Fixes command/control input being accidentally rewritten by the natural-language normalizer.**
-
-Slash commands such as `/condteach`, `/teachq`, and `/promote` now bypass semantic sentence normalization and reach their command handlers intact.
-
-~~~text
-/condteach 高温のCPUは停止する
-    -> preserved command
-    -> conditional semantic store
-~~~
-
-Ordinary natural-language inputs still use v10.16/v10.16.1 normalization.
-
-Run:
-
-~~~powershell
-python .\verify_command_normalization_v10162.py
-~~~
-
-Expected:
-
-~~~text
-STATUS : COMMAND_NORMALIZATION_GUARD_V10162_PASS
-~~~
-
-See `RELEASE_NOTES_v10.16.2.md`.
-
----
-# LLM_TRY v10.16.1 — Conditional Semantic Proposition
-
-**Experimental branch: condition-aware query normalization + deterministic conditional retrieval.**
-
-v10.16.1 fixes conditional questions being misread as declarative modifier sentences and adds a structured `(subject, condition, predicate)` store.
-
-~~~text
-/condteach 高温のCPUは停止する
-/condteach 低温のCPUは正常に動作する
+    -> CPUは、高温の場合、停止する
 
 高温の場合CPUはどうなる？
 CPUが高温のときは？
+CPUは高温の場合どうなる？
+    -> subject=CPU, condition=高温
     -> CPUは、高温の場合、停止する。
 
 低温時のCPUは？
+    -> subject=CPU, condition=低温
     -> CPUは、低温の場合、正常に動作する。
 ~~~
 
-Runtime retrieval occurs before the general Retrieval-First / Semantic Knowledge / LLM generation path, so a matching conditional proposition requires **0 generated probe tokens**.
+## Safety boundaries
 
-Run:
+- Slash commands bypass natural-language semantic normalization.
+- Conditional questions are never captured as declarative candidates.
+- Auto-detected conditional statements remain untrusted until explicit approval.
+- Already approved facts are not queued again.
+- Attribute/ownership/relation phrases remain unchanged unless positively classified as conditional.
+- Conditional-store HITs bypass LLM generation.
+
+## Commands
+
+~~~text
+/condteach S       explicitly store a conditional semantic proposition
+/conds             list approved conditional propositions
+/condcandidates    list pending auto-detected candidates
+/condapprove N     approve one candidate
+/condapprove all   approve all pending candidates
+/semstatus         show semantic + conditional store/internalization status
+/sleep             queue approved conditional knowledge for LLM internalization
+~~~
+
+`/semstatus` reports:
+
+~~~text
+conditional : <path> (stored=N, candidates=M)
+cond sleep  : internalized=I, pending=P
+~~~
+
+## v10.16 series progression
+
+~~~text
+v10.16.0  Modifier-to-Condition Normalization
+v10.16.1  Conditional Semantic Proposition + Query Retrieval
+v10.16.2  Slash-Command Normalization Guard
+v10.16.3  Automatic Conditional Candidate Lifecycle + /sleep bridge
+v10.16.4  Raw-Input Candidate Guard
+v10.16.5  Stable Integration
+~~~
+
+## Stable verification
+
+Run the integrated verifier:
 
 ~~~powershell
-python .\verify_conditional_semantic_v10161.py
+python .\verify_conditional_runtime_stable_v10165.py
 ~~~
 
-Expected:
+It executes all five established component regressions (48 historical cases total) plus the v10.16.5 status integration check.
+
+Expected final result:
 
 ~~~text
-STATUS : CONDITIONAL_SEMANTIC_V10161_PASS
+STATUS : CONDITIONAL_SEMANTIC_RUNTIME_STABLE_V10165_PASS
 ~~~
 
-See `RELEASE_NOTES_v10.16.1.md`.
-
----
-# LLM_TRY v10.16 — Modifier-to-Condition Normalization
-
-**Experimental branch: conservative conditional surface normalization before runtime routing.**
-
-v10.16 adds a deterministic normalization layer for condition-like modifiers:
-
-~~~text
-高温のCPUは停止する
-        |
-        v
-CPUは、高温の場合、停止する
-~~~
-
-The rule is deliberately conservative. Condition/state phrases such as
-`高温`, `低温`, `高負荷`, `夜間`, `雨の日`, `空腹`, and `実行時`
-can be rewritten, while attribute/ownership/relation expressions such as
-`赤い車`, `日本の首都`, and `文学の分類` remain unchanged.
-
-The normalizer is integrated into `chat.py::normalize_runtime_input()`, so the
-canonical form is produced before routing, retrieval, generation, and learning
-capture.
-
-Run:
+Individual regressions remain available:
 
 ~~~powershell
 python .\verify_modifier_condition_v10160.py
+python .\verify_conditional_semantic_v10161.py
+python .\verify_command_normalization_v10162.py
+python .\verify_conditional_candidate_v10163.py
+python .\verify_conditional_candidate_guard_v10164.py
 ~~~
 
-Expected:
-
-~~~text
-STATUS : MODIFIER_TO_CONDITION_V10160_PASS
-~~~
-
-See `RELEASE_NOTES_v10.16.md` for design details.
+See `RELEASE_NOTES_v10.16.5.md` for the stable integration summary.
 
 ---
 
