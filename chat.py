@@ -126,6 +126,9 @@ from semantic_sleep_learning_v10131 import (
     prepare_semantic_sleep_pairs,
     semantic_sleep_status,
 )
+from modifier_condition_normalization_v10160 import (
+    normalize_modifier_condition_text,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -1929,13 +1932,20 @@ RUNTIME_TRAILING_PUNCTUATION = "、，,。．.!！?？:：;；"
 
 
 def normalize_runtime_input(text: str) -> str:
-    """Normalize harmless surface punctuation before runtime routing.
+    """Normalize runtime input before semantic routing.
 
-    This deliberately removes only sentence-final punctuation and applies NFKC.
-    Semantic content and internal punctuation are preserved.
+    v10.16 keeps the established NFKC / trailing-punctuation cleanup and then
+    applies conservative Modifier-to-Condition normalization.
+
+    Example:
+        高温のCPUは停止する
+            -> CPUは、高温の場合、停止する
+
+    Attribute/ownership phrases that are not proven conditional remain intact.
     """
     normalized = unicodedata.normalize("NFKC", text).strip()
-    return normalized.rstrip(RUNTIME_TRAILING_PUNCTUATION).strip()
+    normalized = normalized.rstrip(RUNTIME_TRAILING_PUNCTUATION).strip()
+    return normalize_modifier_condition_text(normalized)
 
 
 def input_quality_check(text: str) -> tuple[bool, str]:
