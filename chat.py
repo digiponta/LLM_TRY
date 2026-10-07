@@ -126,6 +126,22 @@ from semantic_sleep_learning_v10131 import (
     prepare_semantic_sleep_pairs,
     semantic_sleep_status,
 )
+from modifier_condition_normalization_v10160 import (
+    normalize_modifier_condition_text,
+)
+from conditional_semantic_v10161 import (
+    DEFAULT_CONDITIONAL_CANDIDATE_QUEUE,
+    add_conditional_statement,
+    answer_conditional_query,
+    approve_conditional_candidate,
+    conditional_semantic_status,
+    load_conditional_propositions,
+    parse_conditional_query,
+    parse_conditional_statement,
+    pending_conditional_candidates,
+    prepare_conditional_sleep_pairs,
+    queue_conditional_candidate,
+)
 
 
 DEFAULT_TOKENIZER = "model/tokenizer-v0.7-bpe.json"
@@ -142,6 +158,8 @@ DEFAULT_ONLINE_TRAINER = "online_train.py"
 DEFAULT_RAW_KNOWLEDGE_CORPUS = "data/data-nagato.txt"
 DEFAULT_SEMANTIC_KNOWLEDGE = "data/unified_semantic_memory_v1090.jsonl"
 DEFAULT_PROPOSITION_STORE = "data/semantic_propositions_v1090.jsonl"
+DEFAULT_CONDITIONAL_PROPOSITION_STORE = "data/conditional_propositions_v10161.jsonl"
+DEFAULT_CONDITIONAL_CANDIDATES = DEFAULT_CONDITIONAL_CANDIDATE_QUEUE
 DEFAULT_SUBJECT_INDEX = "data/subject_keyed_propositions_v1090.jsonl"
 DEFAULT_TYPED_SUBJECT_INDEX = "data/typed_subject_propositions_v10100.jsonl"
 DEFAULT_CORPUS_MEMORY = "data/subject_keyed_corpus_memory_v101216.jsonl"
@@ -241,6 +259,16 @@ def parse_args() -> argparse.Namespace:
         "--propositions",
         default=DEFAULT_PROPOSITION_STORE,
         help="Persistent atomic semantic proposition store.",
+    )
+    parser.add_argument(
+        "--conditional-propositions",
+        default=DEFAULT_CONDITIONAL_PROPOSITION_STORE,
+        help="Persistent v10.16.1 conditional semantic proposition store.",
+    )
+    parser.add_argument(
+        "--conditional-candidates",
+        default=DEFAULT_CONDITIONAL_CANDIDATES,
+        help="Pending v10.16.3 conditional proposition candidate queue.",
     )
     parser.add_argument(
         "--subject-index",
@@ -1929,13 +1957,27 @@ RUNTIME_TRAILING_PUNCTUATION = "、，,。．.!！?？:：;；"
 
 
 def normalize_runtime_input(text: str) -> str:
-    """Normalize harmless surface punctuation before runtime routing.
+    """Normalize runtime input before semantic routing.
 
-    This deliberately removes only sentence-final punctuation and applies NFKC.
-    Semantic content and internal punctuation are preserved.
+    v10.16.1 first recognizes conditional *questions* so they cannot be
+    misparsed as declarative modifier statements. Declarative inputs then use
+    the v10.16 Modifier-to-Condition normalizer.
     """
     normalized = unicodedata.normalize("NFKC", text).strip()
-    return normalized.rstrip(RUNTIME_TRAILING_PUNCTUATION).strip()
+
+    # Commands are control-plane input, not natural-language semantic input.
+    # Preserve the command name and payload verbatim (apart from NFKC/trim)
+    # so /condteach, /teachq, /promote, etc. cannot be rewritten as facts.
+    if normalized.startswith("/"):
+        return normalized
+
+    normalized = normalized.rstrip(RUNTIME_TRAILING_PUNCTUATION).strip()
+
+    conditional_query = parse_conditional_query(normalized)
+    if conditional_query.matched:
+        return conditional_query.normalized
+
+    return normalize_modifier_condition_text(normalized)
 
 
 def input_quality_check(text: str) -> tuple[bool, str]:
@@ -2800,7 +2842,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.13.0 Semantic Knowledge Runtime Stable")
+    print(" LLM_TRY Chat - v10.16.5 Conditional Semantic Runtime Stable")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2841,6 +2883,8 @@ def print_info(
         print("Subject index   :", args.subject_index)
         print("Typed index     :", args.typed_subject_index)
         print("Corpus memory   :", args.corpus_memory)
+        print("Conditional db  :", args.conditional_propositions)
+        print("Cond candidates :", args.conditional_candidates)
         print(
             "Concept calib   :",
             CALIBRATION_INFO.get("version", "raw fallback")
@@ -3135,6 +3179,10 @@ def main() -> None:
     print("  /batchstatus  show verification-aware batch repair plan")
     print("  /maintain     recover the previous question from trusted teaching data")
     print("  /maintain all recover all pending trusted teaching candidates")
+    print("  /condteach S  persist conditional semantic proposition statement")
+    print("  /conds        list conditional semantic propositions")
+    print("  /condcandidates list pending auto-detected conditional candidates")
+    print("  /condapprove N approve one pending candidate (or 'all')")
     print("  /propteach S  decompose and persist semantic proposition statement")
     print("  /prop X       compose stored propositions for subject X")
     print("  /props        list atomic semantic propositions")
@@ -3164,6 +3212,12 @@ def main() -> None:
     learning_log = Path(args.learning_log)
     learning_state = Path(args.learning_state)
     proposition_path = resolve_runtime_path(args.propositions)
+    conditional_proposition_path = resolve_runtime_path(
+        args.conditional_propositions
+    )
+    conditional_candidate_path = resolve_runtime_path(
+        args.conditional_candidates
+    )
     unified_semantic_path = resolve_runtime_path(DEFAULT_SEMANTIC_KNOWLEDGE)
     subject_index_path = resolve_runtime_path(args.subject_index)
     typed_subject_index_path = resolve_runtime_path(
@@ -3254,6 +3308,7 @@ def main() -> None:
         if not user_text:
             continue
 
+        raw_user_text = user_text
         normalized_user_text = normalize_runtime_input(user_text)
         if normalized_user_text and normalized_user_text != user_text:
             print(f"[normalized input: {user_text!r} -> {normalized_user_text!r}]")
@@ -3306,6 +3361,94 @@ def main() -> None:
                 f"pairs={learning_log_count(learning_log)}, "
                 f"log={learning_log}]"
             )
+            print()
+            continue
+
+        if command == "/condcandidates":
+            rows = pending_conditional_candidates(
+                conditional_candidate_path
+            )
+            if not rows:
+                print("[conditional candidates: empty]")
+            else:
+                print(
+                    f"[conditional candidates: {len(rows)} pending item(s)]"
+                )
+                for index, row in enumerate(rows, 1):
+                    print(
+                        f"  {index:02d}. "
+                        f"subject={row.get('subject', '')!r} "
+                        f"condition={row.get('condition', '')!r} "
+                        f"predicate={row.get('predicate', '')!r}"
+                    )
+            print()
+            continue
+
+        if command.startswith("/condapprove "):
+            target = user_text[len("/condapprove "):].strip().lower()
+            if target == "all":
+                approved = approve_conditional_candidate(
+                    conditional_candidate_path,
+                    conditional_proposition_path,
+                    index=None,
+                )
+            else:
+                try:
+                    index = int(target)
+                except ValueError:
+                    print("[usage: /condapprove N | /condapprove all]")
+                    print()
+                    continue
+                approved = approve_conditional_candidate(
+                    conditional_candidate_path,
+                    conditional_proposition_path,
+                    index=index,
+                )
+            print(f"[conditional candidates approved: {approved}]")
+            if approved:
+                print("[approved candidates are now available for conditional retrieval]")
+                print("[use /sleep to queue approved conditional knowledge for LLM internalization]")
+            print()
+            continue
+
+        if command == "/conds":
+            rows = load_conditional_propositions(
+                conditional_proposition_path
+            )
+            if not rows:
+                print("[conditional propositions: empty]")
+            else:
+                print(
+                    f"[conditional propositions: {len(rows)} item(s)]"
+                )
+                for index, row in enumerate(rows, 1):
+                    print(
+                        f"  {index:02d}. subject={row.subject!r} "
+                        f"condition={row.condition!r} "
+                        f"predicate={row.predicate!r}"
+                    )
+            print()
+            continue
+
+        if command.startswith("/condteach "):
+            statement = user_text[len("/condteach "):].strip()
+            row = add_conditional_statement(
+                conditional_proposition_path,
+                statement,
+            )
+            if row is None:
+                print(
+                    "[conditional teaching rejected: expected a "
+                    "condition-like statement such as 高温のCPUは停止する]"
+                )
+            else:
+                print(
+                    f"[conditional knowledge saved: "
+                    f"subject={row.subject!r}, "
+                    f"condition={row.condition!r}, "
+                    f"predicate={row.predicate!r}]"
+                )
+                print(f"[canonical: {row.render()}]")
             print()
             continue
 
@@ -3635,6 +3778,12 @@ def main() -> None:
 
         if command == "/semstatus":
             status = semantic_knowledge.status()
+            conditional_status = conditional_semantic_status(
+                conditional_proposition_path,
+                conditional_candidate_path,
+                learning_state,
+                checkpoint_trained_fingerprints(checkpoint),
+            )
             print(
                 f"[semantic knowledge architecture: "
                 f"version={status['version']}, "
@@ -3646,6 +3795,15 @@ def main() -> None:
             print(f"  unified     : {status['unified_path']}")
             print(f"  internalized: {status['learning_log']}")
             print(f"  truth       : {status['truth_store_path']}")
+            print(
+                f"  conditional : {conditional_proposition_path} "
+                f"(stored={conditional_status.propositions}, "
+                f"candidates={conditional_status.pending_candidates})"
+            )
+            print(
+                f"  cond sleep  : internalized={conditional_status.internalized}, "
+                f"pending={conditional_status.pending_internalization}"
+            )
             print()
             continue
 
@@ -4145,15 +4303,21 @@ def main() -> None:
                 learning_state,
                 checkpoint_trained_fingerprints(checkpoint),
             )
+            conditional_queued = prepare_conditional_sleep_pairs(
+                conditional_proposition_path,
+                learning_log,
+                learning_state,
+            )
             print(
                 f"[semantic sleep prepared: "
                 f"memory={before_sleep.memory_subjects}, "
                 f"internalized={before_sleep.internalized}, "
                 f"pending={before_sleep.pending}, "
-                f"newly_queued={queued}]"
+                f"newly_queued={queued}, "
+                f"conditional_queued={conditional_queued}]"
             )
-            if before_sleep.pending == 0:
-                print("[semantic sleep: all Nagato Semantic Memory is already internalized]")
+            if before_sleep.pending == 0 and conditional_queued == 0:
+                print("[semantic sleep: all semantic memory is already internalized]")
                 print()
                 continue
 
@@ -4481,6 +4645,65 @@ def main() -> None:
         last_user_text = user_text
         internalized_record = None
 
+        # v10.16.4 Auto-detect declarative conditional knowledge from
+        # the RAW input, not from the normalized query surface. This prevents
+        # questions such as "CPUが高温のときは?" from becoming
+        # predicate="どうなる" candidates after normalization.
+        raw_conditional_query = parse_conditional_query(raw_user_text)
+        conditional_statement = (
+            None
+            if raw_conditional_query.matched
+            else parse_conditional_statement(raw_user_text)
+        )
+        if conditional_statement is not None:
+            queued_candidate, row = queue_conditional_candidate(
+                conditional_candidate_path,
+                raw_user_text,
+                proposition_path=conditional_proposition_path,
+            )
+            if queued_candidate:
+                print(
+                    f"[conditional candidate queued: "
+                    f"subject={row.subject!r}, "
+                    f"condition={row.condition!r}, "
+                    f"predicate={row.predicate!r}]"
+                )
+                print("[review with /condcandidates, approve with /condapprove N or /condapprove all]")
+                print("[0 generated probe tokens, candidate capture]")
+                print()
+                last_ai_reply = None
+                continue
+
+            # Existing approved facts are not re-queued; allow normal runtime
+            # processing to continue rather than swallowing the input.
+            stored_match = any(
+                stored.subject == conditional_statement.subject
+                and stored.condition == conditional_statement.condition
+                and stored.predicate == conditional_statement.predicate
+                and stored.condition_polarity
+                    == conditional_statement.condition_polarity
+                for stored in load_conditional_propositions(
+                    conditional_proposition_path
+                )
+            )
+            if stored_match:
+                print(
+                    f"[conditional candidate skipped: already stored, "
+                    f"subject={conditional_statement.subject!r}, "
+                    f"condition={conditional_statement.condition!r}, "
+                    f"predicate={conditional_statement.predicate!r}]"
+                )
+            else:
+                print(
+                    f"[conditional candidate already pending: "
+                    f"subject={conditional_statement.subject!r}, "
+                    f"condition={conditional_statement.condition!r}]"
+                )
+                print("[0 generated probe tokens, candidate capture]")
+                print()
+                last_ai_reply = None
+                continue
+
         input_ok, input_reason = input_quality_check(user_text)
         if not input_ok:
             print(f"AI> {UNKNOWN_REPLY}")
@@ -4500,6 +4723,32 @@ def main() -> None:
             print()
             last_ai_reply = None
             continue
+
+        # v10.16.1 Conditional Semantic Retrieval.
+        conditional_query, conditional_answer = answer_conditional_query(
+            conditional_proposition_path,
+            user_text,
+        )
+        if conditional_query.matched:
+            if conditional_answer:
+                print(f"AI> {conditional_answer}")
+                print(
+                    f"[conditional-retrieval=HIT, "
+                    f"subject={conditional_query.subject!r}, "
+                    f"condition={conditional_query.condition!r}, "
+                    f"route=conditional-semantic-v10.16.1]"
+                )
+                print("[0 generated probe tokens, conditional semantic retrieval]")
+                print()
+                history.append((user_text, conditional_answer))
+                last_ai_reply = conditional_answer
+                continue
+            else:
+                print(
+                    f"[conditional-retrieval=MISS, "
+                    f"subject={conditional_query.subject!r}, "
+                    f"condition={conditional_query.condition!r}]"
+                )
 
         # v10.12.16.1 Retrieval-First Runtime.
         # Exact Subject-Keyed Corpus Memory lookup precedes UNKNOWN/generation

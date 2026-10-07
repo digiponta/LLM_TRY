@@ -1,3 +1,144 @@
+# LLM_TRY v10.16.5 — Conditional Semantic Runtime Stable
+
+**Status: Stable candidate — v10.16 conditional-semantic series consolidated after 48/48 component regression cases PASS.**
+
+v10.16.5 integrates modifier normalization, condition-aware semantic storage/retrieval, guarded candidate capture, command-plane protection, and `/sleep` internalization into one stable runtime path.
+
+## Stable architecture
+
+~~~text
+User Input
+   |
+   +-- Slash command --------------------------> Command Plane
+   |
+   +-- Conditional question
+   |      |
+   |      v
+   |   Query Normalization
+   |      |
+   |      v
+   |   (subject, condition)
+   |      |
+   |      v
+   |   Conditional Semantic Store
+   |      |
+   |      +-- HIT --> deterministic answer
+   |      |            0 generated probe tokens
+   |      |
+   |      +-- MISS --> existing semantic / LLM runtime
+   |
+   +-- Conditional declarative statement
+          |
+          v
+      Candidate Capture
+          |
+          v
+      Human Approval
+          |
+          v
+ Conditional Semantic Store
+          |
+          +--> immediate retrieval
+          |
+          v
+        /sleep
+          |
+          v
+ conditional-semantic-sleep pair
+          |
+          v
+ existing incremental trainer
+          |
+          v
+ LLM internalization
+~~~
+
+## Canonical examples
+
+~~~text
+高温のCPUは停止する
+    -> CPUは、高温の場合、停止する
+
+高温の場合CPUはどうなる？
+CPUが高温のときは？
+CPUは高温の場合どうなる？
+    -> subject=CPU, condition=高温
+    -> CPUは、高温の場合、停止する。
+
+低温時のCPUは？
+    -> subject=CPU, condition=低温
+    -> CPUは、低温の場合、正常に動作する。
+~~~
+
+## Safety boundaries
+
+- Slash commands bypass natural-language semantic normalization.
+- Conditional questions are never captured as declarative candidates.
+- Auto-detected conditional statements remain untrusted until explicit approval.
+- Already approved facts are not queued again.
+- Attribute/ownership/relation phrases remain unchanged unless positively classified as conditional.
+- Conditional-store HITs bypass LLM generation.
+
+## Commands
+
+~~~text
+/condteach S       explicitly store a conditional semantic proposition
+/conds             list approved conditional propositions
+/condcandidates    list pending auto-detected candidates
+/condapprove N     approve one candidate
+/condapprove all   approve all pending candidates
+/semstatus         show semantic + conditional store/internalization status
+/sleep             queue approved conditional knowledge for LLM internalization
+~~~
+
+`/semstatus` reports:
+
+~~~text
+conditional : <path> (stored=N, candidates=M)
+cond sleep  : internalized=I, pending=P
+~~~
+
+## v10.16 series progression
+
+~~~text
+v10.16.0  Modifier-to-Condition Normalization
+v10.16.1  Conditional Semantic Proposition + Query Retrieval
+v10.16.2  Slash-Command Normalization Guard
+v10.16.3  Automatic Conditional Candidate Lifecycle + /sleep bridge
+v10.16.4  Raw-Input Candidate Guard
+v10.16.5  Stable Integration
+~~~
+
+## Stable verification
+
+Run the integrated verifier:
+
+~~~powershell
+python .\verify_conditional_runtime_stable_v10165.py
+~~~
+
+It executes all five established component regressions (48 historical cases total) plus the v10.16.5 status integration check.
+
+Expected final result:
+
+~~~text
+STATUS : CONDITIONAL_SEMANTIC_RUNTIME_STABLE_V10165_PASS
+~~~
+
+Individual regressions remain available:
+
+~~~powershell
+python .\verify_modifier_condition_v10160.py
+python .\verify_conditional_semantic_v10161.py
+python .\verify_command_normalization_v10162.py
+python .\verify_conditional_candidate_v10163.py
+python .\verify_conditional_candidate_guard_v10164.py
+~~~
+
+See `RELEASE_NOTES_v10.16.5.md` for the stable integration summary.
+
+---
+
 # LLM_TRY v10.13.0 — Semantic Knowledge Runtime Stable Release
 
 **Status: Stable Release — full v10.13.0 runtime verification PASS on the target RTX 3070 Ti environment.**
