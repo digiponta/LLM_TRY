@@ -134,6 +134,7 @@ from conditional_semantic_v10161 import (
     add_conditional_statement,
     answer_conditional_query,
     approve_conditional_candidate,
+    conditional_semantic_status,
     load_conditional_propositions,
     parse_conditional_query,
     parse_conditional_statement,
@@ -2841,7 +2842,7 @@ def print_info(
 ) -> None:
     print()
     print("==============================================")
-    print(" LLM_TRY Chat - v10.13.0 Semantic Knowledge Runtime Stable")
+    print(" LLM_TRY Chat - v10.16.5 Conditional Semantic Runtime Stable")
     print("==============================================")
     print("Device          :", device)
     if device.type == "cuda":
@@ -2882,6 +2883,8 @@ def print_info(
         print("Subject index   :", args.subject_index)
         print("Typed index     :", args.typed_subject_index)
         print("Corpus memory   :", args.corpus_memory)
+        print("Conditional db  :", args.conditional_propositions)
+        print("Cond candidates :", args.conditional_candidates)
         print(
             "Concept calib   :",
             CALIBRATION_INFO.get("version", "raw fallback")
@@ -3775,6 +3778,12 @@ def main() -> None:
 
         if command == "/semstatus":
             status = semantic_knowledge.status()
+            conditional_status = conditional_semantic_status(
+                conditional_proposition_path,
+                conditional_candidate_path,
+                learning_state,
+                checkpoint_trained_fingerprints(checkpoint),
+            )
             print(
                 f"[semantic knowledge architecture: "
                 f"version={status['version']}, "
@@ -3786,6 +3795,15 @@ def main() -> None:
             print(f"  unified     : {status['unified_path']}")
             print(f"  internalized: {status['learning_log']}")
             print(f"  truth       : {status['truth_store_path']}")
+            print(
+                f"  conditional : {conditional_proposition_path} "
+                f"(stored={conditional_status.propositions}, "
+                f"candidates={conditional_status.pending_candidates})"
+            )
+            print(
+                f"  cond sleep  : internalized={conditional_status.internalized}, "
+                f"pending={conditional_status.pending_internalization}"
+            )
             print()
             continue
 
