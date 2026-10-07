@@ -4,6 +4,74 @@
 
 v10.13.0 freezes the experimentally validated Semantic Knowledge Runtime architecture built through the v10.9-v10.12 series.
 
+## v10.15 experiment: Retrieval Top-K + Daily Conversation SFT
+
+v10.15 advances two independent tracks while preserving the existing stable
+Semantic Runtime.
+
+### Retrieval Top-K
+
+Retrieval-First no longer returns every proposition for a subject by default.
+Exact-subject records are ranked and limited to a configurable Top-K.
+
+Ranking favors:
+
+- direct `Subjectは...` / `Subjectが...` propositions,
+- relation compatibility with the query,
+- lexical overlap with remaining query terms,
+- concise propositions.
+
+The default is:
+
+~~~text
+--retrieval-top-k 5
+~~~
+
+Example:
+
+~~~text
+宇宙とは
+    -> rank all "宇宙" propositions
+    -> select Top 5
+    -> compose only selected evidence
+~~~
+
+Use `--retrieval-top-k 3` or another positive integer to tune compactness.
+
+### Daily Conversation SFT
+
+The stable deterministic daily-chat layer remains the default.  v10.15 adds a
+separate trusted SFT path so unconstrained daily-chat generation can be trained
+without replacing the stable runtime first.
+
+Build and verify:
+
+~~~powershell
+python .\verify_v10150.py
+~~~
+
+Train the separate checkpoint:
+
+~~~powershell
+powershell -ExecutionPolicy Bypass -File .\train_daily_conversation_sft_v10150.ps1
+~~~
+
+Output:
+
+~~~text
+model/model-gpu-v10.15-daily-chat.pt
+~~~
+
+Test generated daily conversation explicitly:
+
+~~~powershell
+python .\chat.py --model model/model-gpu-v10.15-daily-chat.pt --daily-chat-generation
+~~~
+
+Without `--daily-chat-generation`, daily conversation continues to use the
+stable deterministic layer. Knowledge questions continue to use Retrieval /
+Truth / Unknown as before.
+
 ## v10.14 experiment: Daily Conversation Runtime
 
 v10.14 adds a conservative conversational route on top of the existing
