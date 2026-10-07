@@ -2218,11 +2218,19 @@ def daily_chat_fallback(kind: str, user_text: str) -> str:
     if kind == "casual":
         if "元気" in q:
             return "うん。元気。"
-        if "何してる" in q or "今何して" in q:
+        if (
+            "何してる" in q
+            or "今何して" in q
+            or "何をしてる" in q
+            or "何をしている" in q
+        ):
             return "あなたと話している。"
-        if "話そう" in q or "雑談" in q:
+        if "話そう" in q or "雑談" in q or "話さない" in q:
             return "うん。何を話す？"
-        if "好きですか" in q or "好き？" in q or "好きかな" in q:
+        if (
+            "好きですか" in q or "好き？" in q or "好きかな" in q
+            or "は好き" in q or "が好き" in q or "って好き" in q
+        ):
             return "嫌いではない。"
         if "今日は" in q:
             return "今日は、どんな一日だった？"
