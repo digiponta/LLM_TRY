@@ -1,3 +1,38 @@
+# LLM_TRY v10.16.1 — Conditional Semantic Proposition
+
+**Experimental branch: condition-aware query normalization + deterministic conditional retrieval.**
+
+v10.16.1 fixes conditional questions being misread as declarative modifier sentences and adds a structured `(subject, condition, predicate)` store.
+
+~~~text
+/condteach 高温のCPUは停止する
+/condteach 低温のCPUは正常に動作する
+
+高温の場合CPUはどうなる？
+CPUが高温のときは？
+    -> CPUは、高温の場合、停止する。
+
+低温時のCPUは？
+    -> CPUは、低温の場合、正常に動作する。
+~~~
+
+Runtime retrieval occurs before the general Retrieval-First / Semantic Knowledge / LLM generation path, so a matching conditional proposition requires **0 generated probe tokens**.
+
+Run:
+
+~~~powershell
+python .\verify_conditional_semantic_v10161.py
+~~~
+
+Expected:
+
+~~~text
+STATUS : CONDITIONAL_SEMANTIC_V10161_PASS
+~~~
+
+See `RELEASE_NOTES_v10.16.1.md`.
+
+---
 # LLM_TRY v10.16 — Modifier-to-Condition Normalization
 
 **Experimental branch: conservative conditional surface normalization before runtime routing.**
