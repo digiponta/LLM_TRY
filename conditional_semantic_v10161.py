@@ -44,6 +44,14 @@ class ConditionalProposition:
         return f"{row.subject}は、{row.condition}の場合、{row.predicate}。"
 
 @dataclass(frozen=True)
+class ConditionalSemanticStatus:
+    propositions: int
+    pending_candidates: int
+    internalized: int
+    pending_internalization: int
+
+
+@dataclass(frozen=True)
 class ConditionalQuery:
     original: str
     subject: str
@@ -374,3 +382,33 @@ def prepare_conditional_sleep_pairs(
             existing.add(fp)
             queued += 1
     return queued
+
+
+def conditional_semantic_status(
+    proposition_path: Path,
+    candidate_path: Path,
+    learning_state_path: Path,
+    checkpoint_fingerprints: set[str] | frozenset[str] | None = None,
+) -> ConditionalSemanticStatus:
+    rows = load_conditional_propositions(proposition_path)
+    candidates = pending_conditional_candidates(candidate_path)
+    trained = load_trained_fingerprints(learning_state_path)
+    effective = trained
+    if checkpoint_fingerprints is not None:
+        effective = trained.intersection(
+            {str(value) for value in checkpoint_fingerprints}
+        )
+
+    internalized = 0
+    for row in rows:
+        question = f"{row.condition}の場合{row.subject}はどうなる?"
+        answer = row.render()
+        if pair_fingerprint(question, answer) in effective:
+            internalized += 1
+
+    return ConditionalSemanticStatus(
+        propositions=len(rows),
+        pending_candidates=len(candidates),
+        internalized=internalized,
+        pending_internalization=max(0, len(rows) - internalized),
+    )
