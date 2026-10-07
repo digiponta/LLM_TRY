@@ -2085,32 +2085,69 @@ def classify_daily_conversation(text: str) -> str:
     return ""
 
 def daily_chat_fallback(kind: str, user_text: str) -> str:
-    """Stable fallback when the small model cannot produce a clean casual reply."""
+    """Stable Nagato-style response for high-confidence daily conversation."""
+    q = user_text.strip()
+
     if kind == "greeting":
-        if "おやすみ" in user_text:
+        if "おやすみ" in q:
             return "おやすみなさい。"
-        if "おはよう" in user_text:
-            return "おはようございます。"
-        if "こんばんは" in user_text:
+        if "おはよう" in q:
+            return "おはよう。"
+        if "こんばんは" in q:
             return "こんばんは。"
+        if "ただいま" in q:
+            return "おかえり。"
+        if "いってきます" in q:
+            return "いってらっしゃい。"
         return "こんにちは。"
+
     if kind == "acknowledgement":
-        if "ありがとう" in user_text or "ありがと" in user_text:
+        if "ありがとう" in q or "ありがと" in q:
             return "どういたしまして。"
+        if "なるほど" in q:
+            return "うん。"
+        if "了解" in q or "わかった" in q:
+            return "わかった。"
         return "うん。"
+
     if kind == "feeling":
-        if "疲れ" in user_text or "しんど" in user_text:
-            return "そう。今日は少し休んだ方がいいかもしれない。"
-        if "眠" in user_text:
-            return "眠いなら、少し休むのがいいと思う。"
-        if "嬉し" in user_text or "うれし" in user_text or "楽し" in user_text:
+        if "疲れ" in q or "しんど" in q:
+            return "そう。今日は少し休んだ方がいいと思う。"
+        if "眠" in q:
+            return "眠いなら、少し休んだ方がいい。"
+        if "嬉し" in q or "うれし" in q:
             return "それは良かった。"
-        if "悲し" in user_text or "寂し" in user_text or "さみし" in user_text:
+        if "楽し" in q:
+            return "楽しそう。"
+        if "悲し" in q or "寂し" in q or "さみし" in q:
             return "そうなんだ。話したければ、聞く。"
+        if "不安" in q or "緊張" in q:
+            return "そう。不安なら、少しずつ整理すればいい。"
+        if "暇" in q or "退屈" in q:
+            return "何か話す？"
         return "そうなんだ。"
+
     if kind == "persona":
         return "長門有希。"
-    return "うん。もう少し話して。"
+
+    if kind == "casual":
+        if "元気" in q:
+            return "うん。元気。"
+        if "何してる" in q or "今何して" in q:
+            return "あなたと話している。"
+        if "話そう" in q or "雑談" in q:
+            return "うん。何を話す？"
+        if "好きですか" in q or "好き？" in q or "好きかな" in q:
+            return "嫌いではない。"
+        if "今日は" in q:
+            return "今日は、どんな一日だった？"
+        if "最近" in q:
+            return "最近のこと、聞かせて。"
+        if "どう思う" in q or "どうかな" in q or "どうだろう" in q:
+            return "もう少し詳しく聞かせて。"
+        return "うん。もう少し話して。"
+
+    return "うん。"
 
 
 def generate_daily_chat_reply(
@@ -2127,37 +2164,21 @@ def generate_daily_chat_reply(
     repetition_penalty: float,
     min_token_confidence: float,
 ) -> GenerationResult:
-    """Generate casual conversation with a relaxed, quality-only gate."""
-    prompt, _ = build_prompt(
-        history=history,
-        user_text=normalize_identity_query(user_text),
-        history_turns=history_turns,
-    )
-    result = generate_reply(
-        model=model,
-        tokenizer=tokenizer,
-        prompt=prompt,
-        max_new_tokens=max_new_tokens,
-        temperature=max(0.35, temperature),
-        top_k=top_k,
-        repetition_penalty=repetition_penalty,
-        seed=0,
-    )
+    """Return a stable daily-chat reply.
 
-    bad = malformed_or_unstable(result.text)
-    if result.text and result.min_confidence < max(0.005, min_token_confidence * 0.50):
-        bad = True
-
-    if bad:
-        fallback = daily_chat_fallback(kind, user_text)
-        return GenerationResult(
-            text=fallback,
-            token_count=0,
-            mean_confidence=result.mean_confidence,
-            min_confidence=result.min_confidence,
-            mean_top2_margin=result.mean_top2_margin,
-        )
-    return result
+    v10.14.1 intentionally uses deterministic conversational responses for
+    high-confidence daily intents.  The 8.96M model remains responsible for
+    knowledge-internalized generation, but is not trusted for unconstrained
+    small-talk until a dedicated daily-conversation SFT passes regression.
+    """
+    reply = daily_chat_fallback(kind, user_text)
+    return GenerationResult(
+        text=reply,
+        token_count=0,
+        mean_confidence=1.0,
+        min_confidence=1.0,
+        mean_top2_margin=1.0,
+    )
 
 
 def greeting_consistent(answer: str) -> bool:
@@ -4672,7 +4693,7 @@ def main() -> None:
             print(f"AI> {daily.text}")
             print(
                 f"[daily-chat=ACCEPT, intent={daily_kind}, "
-                "route=CASUAL_CHAT, unknown_gate=bypassed, "
+                "route=CASUAL_CHAT_STABLE, unknown_gate=bypassed, "
                 f"history_turns={min(len(history), max(3, args.history_turns))}]"
             )
             print(
