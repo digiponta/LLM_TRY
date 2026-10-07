@@ -2075,7 +2075,7 @@ def classify_daily_conversation(text: str) -> str:
     casual_patterns = (
         "どう思う", "どうかな", "どうだろう", "元気", "何してる",
         "話そう", "雑談", "今日は", "最近", "今何して", "好きですか",
-        "好き？", "好きかな",
+        "好き？", "好きかな", "は好き", "が好き",
     )
     if any(x in q for x in casual_patterns):
         return "casual"
