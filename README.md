@@ -1,6 +1,6 @@
 # LLM_TRY v10.16.5 — Conditional Semantic Runtime Stable
 
-**Status: Stable candidate — v10.16 conditional-semantic series consolidated after 48/48 component regression cases PASS.**
+**Status: Stable Release — v10.16 conditional-semantic series merged into main after 48/48 component regression cases and 6/6 stable integration checks PASS.**
 
 v10.16.5 integrates modifier normalization, condition-aware semantic storage/retrieval, guarded candidate capture, command-plane protection, and `/sleep` internalization into one stable runtime path.
 
@@ -106,7 +106,7 @@ v10.16.1  Conditional Semantic Proposition + Query Retrieval
 v10.16.2  Slash-Command Normalization Guard
 v10.16.3  Automatic Conditional Candidate Lifecycle + /sleep bridge
 v10.16.4  Raw-Input Candidate Guard
-v10.16.5  Stable Integration
+v10.16.5  Conditional Semantic Runtime Stable Release
 ~~~
 
 ## Stable verification
@@ -135,7 +135,7 @@ python .\verify_conditional_candidate_v10163.py
 python .\verify_conditional_candidate_guard_v10164.py
 ~~~
 
-See `RELEASE_NOTES_v10.16.5.md` for the stable integration summary.
+See `RELEASE_NOTES_v10.16.5.md` for the Stable Release summary.
 
 ---
 
