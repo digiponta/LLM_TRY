@@ -1,3 +1,32 @@
+# LLM_TRY v10.16.2 — Slash-Command Normalization Guard
+
+**Fixes command/control input being accidentally rewritten by the natural-language normalizer.**
+
+Slash commands such as `/condteach`, `/teachq`, and `/promote` now bypass semantic sentence normalization and reach their command handlers intact.
+
+~~~text
+/condteach 高温のCPUは停止する
+    -> preserved command
+    -> conditional semantic store
+~~~
+
+Ordinary natural-language inputs still use v10.16/v10.16.1 normalization.
+
+Run:
+
+~~~powershell
+python .\verify_command_normalization_v10162.py
+~~~
+
+Expected:
+
+~~~text
+STATUS : COMMAND_NORMALIZATION_GUARD_V10162_PASS
+~~~
+
+See `RELEASE_NOTES_v10.16.2.md`.
+
+---
 # LLM_TRY v10.16.1 — Conditional Semantic Proposition
 
 **Experimental branch: condition-aware query normalization + deterministic conditional retrieval.**
