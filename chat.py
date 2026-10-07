@@ -2099,6 +2099,69 @@ def classify_daily_conversation(text: str) -> str:
 
     return ""
 
+def daily_chat_expected_terms(kind: str, user_text: str) -> tuple[str, ...]:
+    """Expected lexical anchors for generated daily-chat replies.
+
+    This is not a full semantic judge.  It is a conservative guardrail used to
+    reject obviously off-intent SFT generations on small held-out paraphrases.
+    """
+    q = user_text.strip()
+
+    if kind == "greeting":
+        if "おはよう" in q:
+            return ("おはよう",)
+        if "こんばんは" in q:
+            return ("こんばんは",)
+        if "おやすみ" in q:
+            return ("おやすみ",)
+        return ("こんにちは", "やあ")
+
+    if kind == "acknowledgement":
+        if "ありがとう" in q or "ありがと" in q:
+            return ("どういたしまして", "うん")
+        return ("うん", "わかった", "そう")
+
+    if kind == "feeling":
+        if "疲れ" in q or "しんど" in q:
+            return ("休", "疲", "そう")
+        if "眠" in q:
+            return ("眠", "休")
+        if "嬉" in q or "うれ" in q or "楽し" in q:
+            return ("良", "嬉", "楽し")
+        if "悲" in q or "寂" in q or "さみ" in q:
+            return ("聞", "そう", "話")
+        if "不安" in q or "緊張" in q:
+            return ("不安", "整理", "そう")
+
+    if kind == "persona":
+        return ("長門",)
+
+    if kind == "casual":
+        if "元気" in q:
+            return ("元気",)
+        if "何して" in q or "何をして" in q:
+            return ("話", "あなた")
+        if "好き" in q:
+            return ("嫌い", "好き")
+        if "最近" in q:
+            return ("最近", "聞")
+        if "話" in q:
+            return ("話", "うん")
+
+    return ()
+
+
+def daily_chat_generation_consistent(
+    kind: str,
+    user_text: str,
+    answer: str,
+) -> bool:
+    terms = daily_chat_expected_terms(kind, user_text)
+    if not terms:
+        return True
+    return any(term in answer for term in terms)
+
+
 def daily_chat_fallback(kind: str, user_text: str) -> str:
     """Stable Nagato-style response for high-confidence daily conversation."""
     q = user_text.strip()
@@ -4713,6 +4776,11 @@ def main() -> None:
                     malformed_or_unstable(generated_daily.text)
                     or generated_daily.min_confidence < max(
                         0.005, args.min_token_confidence * 0.50
+                    )
+                    or not daily_chat_generation_consistent(
+                        daily_kind,
+                        user_text,
+                        generated_daily.text,
                     )
                 ):
                     daily = generate_daily_chat_reply(
