@@ -130,10 +130,16 @@ from modifier_condition_normalization_v10160 import (
     normalize_modifier_condition_text,
 )
 from conditional_semantic_v10161 import (
+    DEFAULT_CONDITIONAL_CANDIDATE_QUEUE,
     add_conditional_statement,
     answer_conditional_query,
+    approve_conditional_candidate,
     load_conditional_propositions,
     parse_conditional_query,
+    parse_conditional_statement,
+    pending_conditional_candidates,
+    prepare_conditional_sleep_pairs,
+    queue_conditional_candidate,
 )
 
 
@@ -152,6 +158,7 @@ DEFAULT_RAW_KNOWLEDGE_CORPUS = "data/data-nagato.txt"
 DEFAULT_SEMANTIC_KNOWLEDGE = "data/unified_semantic_memory_v1090.jsonl"
 DEFAULT_PROPOSITION_STORE = "data/semantic_propositions_v1090.jsonl"
 DEFAULT_CONDITIONAL_PROPOSITION_STORE = "data/conditional_propositions_v10161.jsonl"
+DEFAULT_CONDITIONAL_CANDIDATES = DEFAULT_CONDITIONAL_CANDIDATE_QUEUE
 DEFAULT_SUBJECT_INDEX = "data/subject_keyed_propositions_v1090.jsonl"
 DEFAULT_TYPED_SUBJECT_INDEX = "data/typed_subject_propositions_v10100.jsonl"
 DEFAULT_CORPUS_MEMORY = "data/subject_keyed_corpus_memory_v101216.jsonl"
@@ -256,6 +263,11 @@ def parse_args() -> argparse.Namespace:
         "--conditional-propositions",
         default=DEFAULT_CONDITIONAL_PROPOSITION_STORE,
         help="Persistent v10.16.1 conditional semantic proposition store.",
+    )
+    parser.add_argument(
+        "--conditional-candidates",
+        default=DEFAULT_CONDITIONAL_CANDIDATES,
+        help="Pending v10.16.3 conditional proposition candidate queue.",
     )
     parser.add_argument(
         "--subject-index",
@@ -3166,6 +3178,8 @@ def main() -> None:
     print("  /maintain all recover all pending trusted teaching candidates")
     print("  /condteach S  persist conditional semantic proposition statement")
     print("  /conds        list conditional semantic propositions")
+    print("  /condcandidates list pending auto-detected conditional candidates")
+    print("  /condapprove N approve one pending candidate (or 'all')")
     print("  /propteach S  decompose and persist semantic proposition statement")
     print("  /prop X       compose stored propositions for subject X")
     print("  /props        list atomic semantic propositions")
@@ -3197,6 +3211,9 @@ def main() -> None:
     proposition_path = resolve_runtime_path(args.propositions)
     conditional_proposition_path = resolve_runtime_path(
         args.conditional_propositions
+    )
+    conditional_candidate_path = resolve_runtime_path(
+        args.conditional_candidates
     )
     unified_semantic_path = resolve_runtime_path(DEFAULT_SEMANTIC_KNOWLEDGE)
     subject_index_path = resolve_runtime_path(args.subject_index)
@@ -3340,6 +3357,53 @@ def main() -> None:
                 f"pairs={learning_log_count(learning_log)}, "
                 f"log={learning_log}]"
             )
+            print()
+            continue
+
+        if command == "/condcandidates":
+            rows = pending_conditional_candidates(
+                conditional_candidate_path
+            )
+            if not rows:
+                print("[conditional candidates: empty]")
+            else:
+                print(
+                    f"[conditional candidates: {len(rows)} pending item(s)]"
+                )
+                for index, row in enumerate(rows, 1):
+                    print(
+                        f"  {index:02d}. "
+                        f"subject={row.get('subject', '')!r} "
+                        f"condition={row.get('condition', '')!r} "
+                        f"predicate={row.get('predicate', '')!r}"
+                    )
+            print()
+            continue
+
+        if command.startswith("/condapprove "):
+            target = user_text[len("/condapprove "):].strip().lower()
+            if target == "all":
+                approved = approve_conditional_candidate(
+                    conditional_candidate_path,
+                    conditional_proposition_path,
+                    index=None,
+                )
+            else:
+                try:
+                    index = int(target)
+                except ValueError:
+                    print("[usage: /condapprove N | /condapprove all]")
+                    print()
+                    continue
+                approved = approve_conditional_candidate(
+                    conditional_candidate_path,
+                    conditional_proposition_path,
+                    index=index,
+                )
+            print(f"[conditional candidates approved: {approved}]")
+            if approved:
+                print("[approved candidates are now available for conditional retrieval]")
+                print("[use /sleep to queue approved conditional knowledge for LLM internalization]")
             print()
             continue
 
@@ -4220,15 +4284,21 @@ def main() -> None:
                 learning_state,
                 checkpoint_trained_fingerprints(checkpoint),
             )
+            conditional_queued = prepare_conditional_sleep_pairs(
+                conditional_proposition_path,
+                learning_log,
+                learning_state,
+            )
             print(
                 f"[semantic sleep prepared: "
                 f"memory={before_sleep.memory_subjects}, "
                 f"internalized={before_sleep.internalized}, "
                 f"pending={before_sleep.pending}, "
-                f"newly_queued={queued}]"
+                f"newly_queued={queued}, "
+                f"conditional_queued={conditional_queued}]"
             )
-            if before_sleep.pending == 0:
-                print("[semantic sleep: all Nagato Semantic Memory is already internalized]")
+            if before_sleep.pending == 0 and conditional_queued == 0:
+                print("[semantic sleep: all semantic memory is already internalized]")
                 print()
                 continue
 
@@ -4555,6 +4625,33 @@ def main() -> None:
 
         last_user_text = user_text
         internalized_record = None
+
+        # v10.16.3 Auto-detect declarative conditional knowledge.
+        # It is queued as a candidate, never trusted automatically.
+        conditional_statement = parse_conditional_statement(user_text)
+        if conditional_statement is not None:
+            queued_candidate, row = queue_conditional_candidate(
+                conditional_candidate_path,
+                user_text,
+            )
+            if queued_candidate:
+                print(
+                    f"[conditional candidate queued: "
+                    f"subject={row.subject!r}, "
+                    f"condition={row.condition!r}, "
+                    f"predicate={row.predicate!r}]"
+                )
+                print("[review with /condcandidates, approve with /condapprove N or /condapprove all]")
+            else:
+                print(
+                    f"[conditional candidate already pending: "
+                    f"subject={conditional_statement.subject!r}, "
+                    f"condition={conditional_statement.condition!r}]"
+                )
+            print("[0 generated probe tokens, candidate capture]")
+            print()
+            last_ai_reply = None
+            continue
 
         input_ok, input_reason = input_quality_check(user_text)
         if not input_ok:
