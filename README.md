@@ -1,3 +1,32 @@
+# LLM_TRY v10.16.4 — Raw-Input Conditional Candidate Guard
+
+Fixes false candidate capture caused by detecting candidates after query normalization.
+
+~~~text
+CPUが高温のときは？
+    -> query (not a candidate)
+
+CPUは、高温の場合、停止する。
+    -> already stored fact (not re-queued)
+~~~
+
+Candidate detection now uses the original raw input, excludes conditional questions, and checks the approved Conditional Semantic Store before queueing.
+
+Run:
+
+~~~powershell
+python .\verify_conditional_candidate_guard_v10164.py
+~~~
+
+Expected:
+
+~~~text
+STATUS : RAW_CONDITIONAL_CANDIDATE_GUARD_V10164_PASS
+~~~
+
+See `RELEASE_NOTES_v10.16.4.md`.
+
+---
 # LLM_TRY v10.16.3 — Automatic Conditional Candidate Capture
 
 **Experimental branch: declarative conditional statements are auto-detected and queued for review.**
