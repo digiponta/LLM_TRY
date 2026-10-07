@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 from function_semantic_decomposition_v101213 import (
     FunctionStructure,
@@ -42,6 +43,64 @@ class RetrievalFirstResult:
     provenance: str
 
 
+def _char_bigrams(text: str) -> set[str]:
+    compact = re.sub(r"[\s。、,.!?！？:：;；「」『』（）()\[\]{}]", "", normalize(text).lower())
+    if not compact:
+        return set()
+    if len(compact) < 2:
+        return {compact}
+    return {compact[i:i + 2] for i in range(len(compact) - 1)}
+
+
+def _query_terms(query: str, subject: str) -> str:
+    value = normalize(query)
+    value = value.replace(subject, "")
+    value = re.sub(r"(とは|について|教えて|説明して|説明してください|って何|何ですか)", "", value)
+    return value.strip()
+
+
+def rank_records(
+    records: list[CorpusMemoryRecord],
+    *,
+    subject: str,
+    query: str = "",
+) -> list[CorpusMemoryRecord]:
+    """Rank exact-subject corpus records for compact Top-K retrieval.
+
+    Ranking favors direct subject statements, query-term overlap, relation
+    compatibility, and compact statements. Corpus order remains the final
+    deterministic tie breaker.
+    """
+    q_terms = _query_terms(query, subject)
+    q_bigrams = _char_bigrams(q_terms)
+
+    scored = []
+    for index, row in enumerate(records):
+        statement = normalize(row.statement)
+        score = 0.0
+
+        if statement.startswith(f"{subject}は") or statement.startswith(f"{subject}が"):
+            score += 3.0
+
+        if "とは" in query and row.relation == "definition":
+            score += 2.0
+        elif "なぜ" in query and row.relation == "cause":
+            score += 2.0
+        elif ("使い方" in query or "方法" in query) and row.relation == "function":
+            score += 2.0
+
+        if q_bigrams:
+            s_bigrams = _char_bigrams(statement)
+            score += 4.0 * (len(q_bigrams & s_bigrams) / max(1, len(q_bigrams)))
+
+        # Prefer concise evidence when relevance is otherwise similar.
+        score -= min(len(statement), 240) / 2400.0
+        scored.append((score, -index, row))
+
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [row for _, _, row in scored]
+
+
 def compose_records(records: list[CorpusMemoryRecord]) -> str:
     statements: list[str] = []
     for row in records:
@@ -60,6 +119,9 @@ def dominant_relation(records: list[CorpusMemoryRecord]) -> str:
 def resolve_subject(
     memory_path: str | Path,
     subject: str,
+    *,
+    query: str = "",
+    top_k: int = 5,
 ) -> RetrievalFirstResult:
     target = normalize(subject)
     if not target:
@@ -87,8 +149,14 @@ def resolve_subject(
             provenance="none",
         )
 
-    answer = compose_records(rows)
-    relation = dominant_relation(rows)
+    ranked_rows = rank_records(
+        rows,
+        subject=target,
+        query=query,
+    )
+    selected_rows = ranked_rows[:max(1, int(top_k))]
+    answer = compose_records(selected_rows)
+    relation = dominant_relation(selected_rows)
     structure = None
     if relation == "function":
         structure = FunctionStructure(
@@ -104,10 +172,13 @@ def resolve_subject(
         subject=target,
         answer=answer,
         relation=relation,
-        records=tuple(rows),
+        records=tuple(selected_rows),
         function_structure=structure,
         route="CORPUS_MEMORY",
-        provenance="data-nagato.txt:subject-keyed-corpus-memory:v10.12.16",
+        provenance=(
+            "data-nagato.txt:subject-keyed-corpus-memory:"
+            f"top-k={len(selected_rows)}/{len(rows)}:v10.15"
+        ),
     )
 
 
