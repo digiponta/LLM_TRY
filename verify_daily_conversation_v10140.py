@@ -28,6 +28,8 @@ def main() -> None:
         "あなたは誰？": "persona",
         "長門有希": "persona",
         "元気": "casual",
+        "本は好き": "casual",
+        "読書って好き": "casual",
     }
     for text, expected in casual.items():
         actual = classify_daily_conversation(text)
