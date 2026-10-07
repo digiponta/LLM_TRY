@@ -2059,7 +2059,7 @@ def classify_daily_conversation(text: str) -> str:
         return "acknowledgement"
 
     feeling_patterns = (
-        "疲れた", "眠い", "嬉しい", "うれしい", "悲しい", "寂しい",
+        "疲れた", "疲れ", "眠い", "眠", "嬉しい", "うれしい", "悲しい", "寂しい",
         "さみしい", "楽しい", "つらい", "しんどい", "退屈", "暇",
         "緊張", "不安", "困った", "困って", "面白い", "おもしろい",
     )
@@ -2075,7 +2075,7 @@ def classify_daily_conversation(text: str) -> str:
     casual_patterns = (
         "どう思う", "どうかな", "どうだろう", "元気", "何してる",
         "話そう", "雑談", "今日は", "最近", "今何して", "好きですか",
-        "好き？", "好きかな", "は好き", "が好き",
+        "好き？", "好きかな", "は好き", "が好き", "って好き", "話さない",
     )
     if any(x in q for x in casual_patterns):
         return "casual"
