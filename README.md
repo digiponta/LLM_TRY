@@ -4,6 +4,57 @@
 
 v10.13.0 freezes the experimentally validated Semantic Knowledge Runtime architecture built through the v10.9-v10.12 series.
 
+## v10.14 experiment: Daily Conversation Runtime
+
+v10.14 adds a conservative conversational route on top of the existing
+Semantic Knowledge Runtime.
+
+~~~text
+User Input
+    |
+    v
+Daily Conversation Router
+    |
+    +--> greeting / acknowledgement / feeling / persona / small talk
+    |        |
+    |        v
+    |      LLM generation + short conversation history
+    |        |
+    |        +--> malformed/very-low-confidence output -> stable fallback
+    |
+    +--> knowledge / definition / comparison / how / why
+             |
+             v
+       existing Retrieval / Truth / Unknown runtime
+~~~
+
+The important rule is that daily conversation does **not** globally disable the
+Unknown Gate.  Only inputs confidently classified as conversational bypass the
+knowledge rejection path.  Queries such as `CPUとは`, `宇宙とは`,
+`GPUとCPUの違い`, `なぜGPUは高速なの`, and bare knowledge concepts such
+as `CPU` or `宇宙` remain on the existing Semantic Runtime path.
+
+Examples of daily-chat inputs:
+
+~~~text
+こんにちは
+今日は疲れた
+眠い
+なるほど
+ありがとう
+元気
+あなたは誰？
+長門有希
+~~~
+
+Run the routing regression:
+
+~~~powershell
+python .\verify_daily_conversation_v10140.py
+~~~
+
+Then start chat normally and test both conversational and knowledge paths.
+
 ## v10.13.2 experiment: Modifier-Aware Subject Learning
 
 `data/data-nagato.txt` now supports conservative canonicalization of
