@@ -71,11 +71,12 @@ _CANONICAL_RE = re.compile(
     r"(?P<predicate>.+?)\s*$"
 )
 
-# Primary input form: modifier の subject は predicate
-_MODIFIER_NO_SUBJECT_RE = re.compile(
-    r"^\s*(?P<modifier>.+?)\s*の\s*"
-    r"(?P<subject>.+?)\s*は\s*"
-    r"(?P<predicate>.+?)\s*$"
+# Primary input form is parsed in two stages:
+#   (modifier の subject) は predicate
+# The left side may itself contain の (e.g. 雨の日の道路), so candidate
+# boundaries are evaluated from right to left and only a proven condition wins.
+_SUBJECT_PREDICATE_RE = re.compile(
+    r"^\s*(?P<left>.+?)\s*は\s*(?P<predicate>.+?)\s*$"
 )
 
 
@@ -150,7 +151,7 @@ def normalize_modifier_condition(text: str) -> ModifierConditionResult:
             reason="already canonical",
         )
 
-    match = _MODIFIER_NO_SUBJECT_RE.match(source)
+    match = _SUBJECT_PREDICATE_RE.match(source)
     if not match:
         return ModifierConditionResult(
             original=original,
@@ -159,23 +160,39 @@ def normalize_modifier_condition(text: str) -> ModifierConditionResult:
             reason="unsupported surface pattern",
         )
 
-    modifier = _surface(match.group("modifier"))
-    subject = _surface(match.group("subject"))
+    left = _surface(match.group("left"))
     predicate = _surface(match.group("predicate"))
-
-    if not modifier or not subject or not predicate:
+    if "の" not in left:
         return ModifierConditionResult(
             original=original,
             normalized=source,
             transformed=False,
-            modifier=modifier,
-            subject=subject,
             predicate=predicate,
-            reason="missing component",
+            reason="no modifier boundary",
         )
 
-    is_condition, reason = classify_modifier(modifier)
-    if not is_condition:
+    modifier = ""
+    subject = ""
+    reason = "modifier not proven conditional"
+
+    # Prefer the rightmost boundary that yields a condition-like modifier.
+    # This correctly parses 雨の日の道路 as modifier=雨の日, subject=道路.
+    boundaries = [i for i, ch in enumerate(left) if ch == "の"]
+    for boundary in reversed(boundaries):
+        candidate_modifier = _surface(left[:boundary])
+        candidate_subject = _surface(left[boundary + 1:])
+        if not candidate_modifier or not candidate_subject:
+            continue
+        is_condition, candidate_reason = classify_modifier(
+            candidate_modifier
+        )
+        if is_condition:
+            modifier = candidate_modifier
+            subject = candidate_subject
+            reason = candidate_reason
+            break
+
+    if not modifier or not subject or not predicate:
         return ModifierConditionResult(
             original=original,
             normalized=source,
