@@ -125,6 +125,7 @@ def deduplicate_trusted_rows(
         "chat-approved": 1,
         "chat-manual": 2,
         "semantic-sleep": 2,
+        "daily-conversation-sft": 2,
         "chat-recovery": 3,
     }
     selected: dict[str, Tuple[str, str, str]] = {}
@@ -319,11 +320,15 @@ def main() -> None:
 
     manual_rows = [(u, a) for u, a, s in pending_rows if s == "chat-manual"]
     sleep_rows = [(u, a) for u, a, s in pending_rows if s == "semantic-sleep"]
+    daily_rows = [(u, a) for u, a, s in pending_rows if s == "daily-conversation-sft"]
     approved_rows = [(u, a) for u, a, s in pending_rows if s == "chat-approved"]
     recovery_rows = [(u, a) for u, a, s in pending_rows if s == "chat-recovery"]
     auto_rows = [
         (u, a) for u, a, s in new_rows
-        if s not in ("chat-manual", "semantic-sleep", "chat-approved", "chat-recovery")
+        if s not in (
+            "chat-manual", "semantic-sleep", "daily-conversation-sft",
+            "chat-approved", "chat-recovery"
+        )
     ]
 
     weighted_new_pairs: List[Tuple[str, str]] = []
@@ -332,6 +337,8 @@ def main() -> None:
     for pair in sleep_rows:
         weighted_new_pairs.extend([pair] * max(1, args.manual_weight))
     for pair in approved_rows:
+        weighted_new_pairs.extend([pair] * max(1, args.manual_weight))
+    for pair in daily_rows:
         weighted_new_pairs.extend([pair] * max(1, args.manual_weight))
     for pair in recovery_rows:
         weighted_new_pairs.extend([pair] * max(1, args.recovery_weight))
