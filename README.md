@@ -1,3 +1,47 @@
+# LLM_TRY v10.16.3 — Automatic Conditional Candidate Capture
+
+**Experimental branch: declarative conditional statements are auto-detected and queued for review.**
+
+Example:
+
+~~~text
+高温のCPUは停止する
+    -> candidate queue
+    -> /condcandidates
+    -> /condapprove 1
+    -> Conditional Semantic Store
+    -> immediate retrieval
+    -> /sleep
+    -> LLM internalization candidate
+~~~
+
+Auto-detected statements are not trusted automatically. Approval is required before retrieval or `/sleep` training.
+
+Commands:
+
+~~~text
+/condcandidates
+/condapprove N
+/condapprove all
+/conds
+/sleep
+~~~
+
+Run:
+
+~~~powershell
+python .\verify_conditional_candidate_v10163.py
+~~~
+
+Expected:
+
+~~~text
+STATUS : CONDITIONAL_CANDIDATE_LIFECYCLE_V10163_PASS
+~~~
+
+See `RELEASE_NOTES_v10.16.3.md`.
+
+---
 # LLM_TRY v10.16.2 — Slash-Command Normalization Guard
 
 **Fixes command/control input being accidentally rewritten by the natural-language normalizer.**
