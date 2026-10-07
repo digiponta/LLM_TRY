@@ -4,6 +4,46 @@
 
 v10.13.0 freezes the experimentally validated Semantic Knowledge Runtime architecture built through the v10.9-v10.12 series.
 
+## v10.13.2 experiment: Modifier-Aware Subject Learning
+
+`data/data-nagato.txt` now supports conservative canonicalization of
+modifier-bearing topic phrases:
+
+~~~text
+modifier + subject + predicate
+        |
+        v
+canonical subject => full original proposition
+~~~
+
+Examples found in the current corpus include:
+
+~~~text
+重力波 => 強力な重力波は、物体をも切り裂く。
+宇宙   => 全体としての宇宙は、自らを、初めたり、終わらせたりすることはできない。
+宇宙   => 時空間上の宇宙は、均一と不均一が混在する様相。
+~~~
+
+Canonicalization is deliberately conservative.  A suffix is treated as the
+canonical subject only when it also appears as a standalone corpus topic and
+the removed prefix looks like a Japanese modifier (for example, ending in
+`な`, `の`, `する`, `した`, `ない`, or `ある`).  The
+complete source proposition is retained unchanged.
+
+Semantic Sleep now rebuilds the derived subject-keyed corpus memory on startup,
+so existing installations automatically pick up the new mappings.  To verify
+and retrain on Windows PowerShell:
+
+~~~powershell
+git checkout v10.13.2-modified-subject-learning
+python .\verify_modified_subject_learning_v10132.py
+.\retrain_modified_subject_v10132.ps1
+~~~
+
+The retraining script runs the regression first, selects the current online
+checkpoint when present, rebuilds Nagato Semantic Memory, executes `/sleep`,
+and prints the final pending/internalized status.
+
 ## Post-stable experiment: v10.13.1 Semantic Sleep Learning
 
 The post-v10.13.0 experimental extension adds a two-stage knowledge lifecycle for
