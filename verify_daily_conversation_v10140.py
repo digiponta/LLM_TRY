@@ -18,6 +18,8 @@ def main() -> None:
 
     casual = {
         "こんにちは": "greeting",
+        "こんばんは": "greeting",
+        "おはよう": "greeting",
         "今日は疲れた": "feeling",
         "眠い": "feeling",
         "なるほど": "acknowledgement",
@@ -40,6 +42,7 @@ def main() -> None:
         "Pythonの使い方",
         "宇宙",
         "CPU",
+        "CPUは",
     )
     for text in knowledge:
         actual = classify_daily_conversation(text)
