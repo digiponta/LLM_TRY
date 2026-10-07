@@ -1951,6 +1951,13 @@ def normalize_runtime_input(text: str) -> str:
     the v10.16 Modifier-to-Condition normalizer.
     """
     normalized = unicodedata.normalize("NFKC", text).strip()
+
+    # Commands are control-plane input, not natural-language semantic input.
+    # Preserve the command name and payload verbatim (apart from NFKC/trim)
+    # so /condteach, /teachq, /promote, etc. cannot be rewritten as facts.
+    if normalized.startswith("/"):
+        return normalized
+
     normalized = normalized.rstrip(RUNTIME_TRAILING_PUNCTUATION).strip()
 
     conditional_query = parse_conditional_query(normalized)
