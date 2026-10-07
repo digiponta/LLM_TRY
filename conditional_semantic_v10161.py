@@ -13,6 +13,9 @@ import re
 import unicodedata
 from pathlib import Path
 from typing import Iterable
+import time
+
+from internalized_knowledge_v10100 import pair_fingerprint, load_trained_fingerprints
 
 from modifier_condition_normalization_v10160 import (
     classify_modifier,
@@ -213,3 +216,143 @@ def answer_conditional_query(path: Path, query: str) -> tuple[ConditionalQuery, 
     body = "、".join(predicates)
     answer = f"{parsed.subject}は、{parsed.condition}の場合、{body}。"
     return parsed, answer
+
+
+DEFAULT_CONDITIONAL_CANDIDATE_QUEUE = "data/conditional_candidates_v10163.jsonl"
+
+
+def load_conditional_candidates(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    rows: list[dict] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def queue_conditional_candidate(
+    path: Path,
+    statement: str,
+) -> tuple[bool, ConditionalProposition | None]:
+    row = parse_conditional_statement(statement)
+    if row is None:
+        return False, None
+
+    existing = load_conditional_candidates(path)
+    key = (row.subject, row.condition, row.predicate)
+    for item in existing:
+        old = (
+            str(item.get("subject", "")),
+            str(item.get("condition", "")),
+            str(item.get("predicate", "")),
+        )
+        if old == key and str(item.get("status", "pending")) == "pending":
+            return False, row
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "subject": row.subject,
+        "condition": row.condition,
+        "predicate": row.predicate,
+        "condition_polarity": row.condition_polarity,
+        "canonical": row.render(),
+        "source_statement": _surface(statement),
+        "status": "pending",
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "version": "v10.16.3",
+    }
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    return True, row
+
+
+def pending_conditional_candidates(path: Path) -> list[dict]:
+    return [
+        row for row in load_conditional_candidates(path)
+        if str(row.get("status", "pending")) == "pending"
+    ]
+
+
+def approve_conditional_candidate(
+    candidate_path: Path,
+    proposition_path: Path,
+    index: int | None = None,
+) -> int:
+    rows = load_conditional_candidates(candidate_path)
+    pending_positions = [
+        i for i, row in enumerate(rows)
+        if str(row.get("status", "pending")) == "pending"
+    ]
+    if index is not None:
+        if index < 1 or index > len(pending_positions):
+            return 0
+        selected = {pending_positions[index - 1]}
+    else:
+        selected = set(pending_positions)
+
+    approved = 0
+    for i in selected:
+        row = rows[i]
+        statement = str(row.get("canonical", "")).strip()
+        if add_conditional_statement(proposition_path, statement) is None:
+            continue
+        row["status"] = "approved"
+        row["approved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        approved += 1
+
+    candidate_path.parent.mkdir(parents=True, exist_ok=True)
+    with candidate_path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return approved
+
+
+def prepare_conditional_sleep_pairs(
+    proposition_path: Path,
+    learning_log_path: Path,
+    learning_state_path: Path,
+) -> int:
+    trained = load_trained_fingerprints(learning_state_path)
+    existing: set[str] = set()
+    if learning_log_path.exists():
+        for raw in learning_log_path.read_text(encoding="utf-8").splitlines():
+            if not raw.strip():
+                continue
+            try:
+                old = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            user = str(old.get("user", "")).strip()
+            answer = str(old.get("assistant", "")).strip()
+            if user and answer:
+                existing.add(pair_fingerprint(user, answer))
+
+    queued = 0
+    learning_log_path.parent.mkdir(parents=True, exist_ok=True)
+    with learning_log_path.open("a", encoding="utf-8") as handle:
+        for row in load_conditional_propositions(proposition_path):
+            question = f"{row.condition}の場合{row.subject}はどうなる?"
+            answer = row.render()
+            fp = pair_fingerprint(question, answer)
+            if fp in trained or fp in existing:
+                continue
+            payload = {
+                "user": question,
+                "assistant": answer,
+                "source": "conditional-semantic-sleep",
+                "semantic_origin": "conditional-propositions-v10.16.3",
+                "fingerprint": fp,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            }
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            existing.add(fp)
+            queued += 1
+    return queued
