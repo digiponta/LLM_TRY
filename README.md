@@ -1,3 +1,41 @@
+# LLM_TRY v10.16 — Modifier-to-Condition Normalization
+
+**Experimental branch: conservative conditional surface normalization before runtime routing.**
+
+v10.16 adds a deterministic normalization layer for condition-like modifiers:
+
+~~~text
+高温のCPUは停止する
+        |
+        v
+CPUは、高温の場合、停止する
+~~~
+
+The rule is deliberately conservative. Condition/state phrases such as
+`高温`, `低温`, `高負荷`, `夜間`, `雨の日`, `空腹`, and `実行時`
+can be rewritten, while attribute/ownership/relation expressions such as
+`赤い車`, `日本の首都`, and `文学の分類` remain unchanged.
+
+The normalizer is integrated into `chat.py::normalize_runtime_input()`, so the
+canonical form is produced before routing, retrieval, generation, and learning
+capture.
+
+Run:
+
+~~~powershell
+python .\verify_modifier_condition_v10160.py
+~~~
+
+Expected:
+
+~~~text
+STATUS : MODIFIER_TO_CONDITION_V10160_PASS
+~~~
+
+See `RELEASE_NOTES_v10.16.md` for design details.
+
+---
+
 # LLM_TRY v10.13.0 — Semantic Knowledge Runtime Stable Release
 
 **Status: Stable Release — full v10.13.0 runtime verification PASS on the target RTX 3070 Ti environment.**
