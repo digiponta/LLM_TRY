@@ -307,6 +307,21 @@ def parse_args() -> argparse.Namespace:
         default=3,
         help="Number of previous turns included in the prompt.",
     )
+    parser.add_argument(
+        "--retrieval-top-k",
+        type=int,
+        default=5,
+        help="Maximum ranked corpus propositions returned by Retrieval-First.",
+    )
+    parser.add_argument(
+        "--daily-chat-generation",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Use model generation for daily chat. Default remains the stable "
+            "deterministic conversation layer until Daily Conversation SFT is validated."
+        ),
+    )
 
     # Conservative selective-prediction gate.
     parser.add_argument(
@@ -3001,6 +3016,8 @@ def print_info(
         )
         print("Fallback        :", UNKNOWN_REPLY)
         print("Context policy  : minimal")
+    print("Retrieval Top-K :", args.retrieval_top_k)
+    print("Daily gen       :", args.daily_chat_generation)
         print("Teaching queue  :", args.teaching_queue)
         print("Knowledge queue :", args.knowledge_queue)
         print("Gate review q   :", args.gate_review_queue)
@@ -4676,24 +4693,65 @@ def main() -> None:
         daily_kind = classify_daily_conversation(user_text)
         if daily_kind:
             daily_start = time.perf_counter()
-            daily = generate_daily_chat_reply(
-                model=model,
-                tokenizer=tokenizer,
-                history=history,
-                user_text=user_text,
-                kind=daily_kind,
-                history_turns=max(3, args.history_turns),
-                max_new_tokens=min(args.max_new_tokens, 64),
-                temperature=args.temperature,
-                top_k=args.top_k,
-                repetition_penalty=args.repetition_penalty,
-                min_token_confidence=args.min_token_confidence,
-            )
+            if args.daily_chat_generation:
+                prompt, _ = build_prompt(
+                    history=history,
+                    user_text=normalize_identity_query(user_text),
+                    history_turns=max(3, args.history_turns),
+                )
+                generated_daily = generate_reply(
+                    model=model,
+                    tokenizer=tokenizer,
+                    prompt=prompt,
+                    max_new_tokens=min(args.max_new_tokens, 64),
+                    temperature=max(0.35, args.temperature),
+                    top_k=args.top_k,
+                    repetition_penalty=args.repetition_penalty,
+                    seed=0,
+                )
+                if (
+                    malformed_or_unstable(generated_daily.text)
+                    or generated_daily.min_confidence < max(
+                        0.005, args.min_token_confidence * 0.50
+                    )
+                ):
+                    daily = generate_daily_chat_reply(
+                        model=model,
+                        tokenizer=tokenizer,
+                        history=history,
+                        user_text=user_text,
+                        kind=daily_kind,
+                        history_turns=max(3, args.history_turns),
+                        max_new_tokens=min(args.max_new_tokens, 64),
+                        temperature=args.temperature,
+                        top_k=args.top_k,
+                        repetition_penalty=args.repetition_penalty,
+                        min_token_confidence=args.min_token_confidence,
+                    )
+                    daily_route = "CASUAL_CHAT_FALLBACK"
+                else:
+                    daily = generated_daily
+                    daily_route = "CASUAL_CHAT_GENERATED"
+            else:
+                daily = generate_daily_chat_reply(
+                    model=model,
+                    tokenizer=tokenizer,
+                    history=history,
+                    user_text=user_text,
+                    kind=daily_kind,
+                    history_turns=max(3, args.history_turns),
+                    max_new_tokens=min(args.max_new_tokens, 64),
+                    temperature=args.temperature,
+                    top_k=args.top_k,
+                    repetition_penalty=args.repetition_penalty,
+                    min_token_confidence=args.min_token_confidence,
+                )
+                daily_route = "CASUAL_CHAT_STABLE"
             daily_elapsed = time.perf_counter() - daily_start
             print(f"AI> {daily.text}")
             print(
                 f"[daily-chat=ACCEPT, intent={daily_kind}, "
-                "route=CASUAL_CHAT_STABLE, unknown_gate=bypassed, "
+                f"route={daily_route}, unknown_gate=bypassed, "
                 f"history_turns={min(len(history), max(3, args.history_turns))}]"
             )
             print(
@@ -4728,6 +4786,8 @@ def main() -> None:
             retrieval = retrieval_first_resolve_subject(
                 corpus_memory_path,
                 retrieval_focus,
+                query=user_text,
+                top_k=args.retrieval_top_k,
             )
             if retrieval.hit:
                 retrieval_truth = effective_truth_record(
