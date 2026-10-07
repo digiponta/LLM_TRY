@@ -2035,7 +2035,8 @@ def classify_daily_conversation(text: str) -> str:
     if any(marker in q for marker in knowledge_markers):
         return ""
 
-    if extract_concept_query_focus(q) or extract_bare_concept_focus(q):
+    # Explicit semantic query forms always stay on the knowledge path.
+    if extract_concept_query_focus(q):
         return ""
 
     greeting_patterns = (
@@ -2060,6 +2061,12 @@ def classify_daily_conversation(text: str) -> str:
     if any(x in q for x in feeling_patterns):
         return "feeling"
 
+    identity_patterns = (
+        "あなたは誰", "名前は", "君は誰", "長門有希", "長門",
+    )
+    if any(x in q for x in identity_patterns):
+        return "persona"
+
     casual_patterns = (
         "どう思う", "どうかな", "どうだろう", "元気", "何してる",
         "話そう", "雑談", "今日は", "最近", "今何して", "好きですか",
@@ -2068,14 +2075,12 @@ def classify_daily_conversation(text: str) -> str:
     if any(x in q for x in casual_patterns):
         return "casual"
 
-    identity_patterns = (
-        "あなたは誰", "名前は", "君は誰", "長門有希", "長門",
-    )
-    if any(x in q for x in identity_patterns):
-        return "persona"
+    # An otherwise bare noun/token is a potential knowledge concept and must
+    # keep the conservative Semantic Runtime behavior.
+    if extract_bare_concept_focus(q):
+        return ""
 
     return ""
-
 
 def daily_chat_fallback(kind: str, user_text: str) -> str:
     """Stable fallback when the small model cannot produce a clean casual reply."""
