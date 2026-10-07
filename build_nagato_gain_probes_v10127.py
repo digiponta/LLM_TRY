@@ -19,9 +19,18 @@ from pathlib import Path
 DEFAULT_DATA = "data/data-nagato.txt"
 DEFAULT_OUTPUT = "data/nagato_gain_probes_v10127.jsonl"
 
-SUBJECT_RE = re.compile(
-    r"^\s*([一-龯々ァ-ヶーA-Za-z0-9・]{2,20})は、?(.{8,120})[。！？!?]?\s*$"
+TOPIC_RE = re.compile(
+    r"^\\s*(.{2,80}?)は、?(.{8,160})[。！？!?]?\\s*$"
 )
+BARE_SUBJECT_RE = re.compile(
+    r"^[一-龯々ァ-ヶーA-Za-z0-9・]{2,24}$"
+)
+MODIFIER_ENDINGS = (
+    "な", "の", "する", "した", "している", "していた",
+    "される", "された", "である", "という", "と呼ばれる",
+    "ない", "ある", "いる", "なる", "なった",
+)
+
 STOP_SUBJECTS = {
     "これは", "それは", "あれは", "私は", "僕は", "彼は", "彼女は",
     "ここは", "そこは", "今日は", "今回は", "場合は",
@@ -51,15 +60,48 @@ def resolve_data_path(value: str) -> Path:
     raise FileNotFoundError(f"Nagato corpus not found: {path}")
 
 
+def _modifier_like(prefix: str) -> bool:
+    """Return True only for conservative Japanese modifier prefixes."""
+    value = prefix.strip()
+    if not value:
+        return False
+    if value.endswith(("、", ",", "。", "！", "？", "?", "!")):
+        return False
+    return value.endswith(MODIFIER_ENDINGS)
+
+
+def _canonical_subject(
+    surface_subject: str,
+    known_subjects: set[str],
+) -> tuple[str, str]:
+    """Map 'modifier + subject' to canonical subject when evidence is strong."""
+    surface = surface_subject.strip()
+    candidates = sorted(
+        (
+            subject
+            for subject in known_subjects
+            if subject != surface
+            and len(subject) >= 2
+            and surface.endswith(subject)
+        ),
+        key=len,
+        reverse=True,
+    )
+    for subject in candidates:
+        modifier = surface[:-len(subject)].strip()
+        if _modifier_like(modifier):
+            return subject, modifier
+    return surface, ""
+
+
 def sentence_candidates(text: str, args: argparse.Namespace) -> list[dict]:
     raw_sentences = [
         s.strip()
-        for s in re.split(r"(?<=[。！？!?])\s*|\r?\n+", text)
+        for s in re.split(r"(?<=[。！？!?])\\s*|\\r?\\n+", text)
         if s.strip()
     ]
-    rows: list[dict] = []
-    seen: set[tuple[str, str]] = set()
 
+    parsed: list[tuple[str, str, str]] = []
     for sentence in raw_sentences:
         if len(sentence) < args.min_answer_chars:
             continue
@@ -68,17 +110,35 @@ def sentence_candidates(text: str, args: argparse.Namespace) -> list[dict]:
         if sentence.startswith(("「", "『", "(", "（")):
             continue
 
-        match = SUBJECT_RE.match(sentence)
+        match = TOPIC_RE.match(sentence)
         if not match:
             continue
 
-        subject = match.group(1).strip()
+        surface_subject = match.group(1).strip()
         predicate = match.group(2).strip()
+        if len(predicate) < 8:
+            continue
+        parsed.append((sentence, surface_subject, predicate))
+
+    # A suffix is promoted to canonical subject only when that suffix also
+    # appears as a standalone topic elsewhere in the corpus.
+    known_subjects = {
+        surface
+        for _, surface, _ in parsed
+        if BARE_SUBJECT_RE.fullmatch(surface)
+        and surface not in {"これ", "それ", "あれ", "ここ", "そこ", "場合", "今回"}
+        and f"{surface}は" not in STOP_SUBJECTS
+        and surface not in STOP_SUBJECTS
+    }
+
+    rows: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    for sentence, surface_subject, predicate in parsed:
+        subject, modifier = _canonical_subject(surface_subject, known_subjects)
         if f"{subject}は" in STOP_SUBJECTS or subject in STOP_SUBJECTS:
             continue
         if subject in {"これ", "それ", "あれ", "ここ", "そこ", "場合", "今回"}:
-            continue
-        if len(predicate) < 8:
             continue
 
         answer = sentence
@@ -91,14 +151,17 @@ def sentence_candidates(text: str, args: argparse.Namespace) -> list[dict]:
         seen.add(key)
         rows.append({
             "concept": subject,
+            "surface_subject": surface_subject,
+            "modifier": modifier,
+            "predicate": predicate,
             "question": question,
             "answer": answer,
             "source_text": sentence,
             "source": str(resolve_data_path(args.data)),
+            "mapping": f"{subject} => {answer}",
         })
 
     return rows
-
 
 def rank_candidates(rows: list[dict], max_probes: int) -> list[dict]:
     frequency = Counter(row["concept"] for row in rows)
