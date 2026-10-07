@@ -61,6 +61,19 @@ def main() -> None:
         daily_chat_fallback("persona", "あなたは誰？") == "長門有希。",
     )
 
+    check(
+        "fallback:acknowledgement",
+        daily_chat_fallback("acknowledgement", "なるほど") == "うん。",
+    )
+    check(
+        "fallback:casual-health",
+        daily_chat_fallback("casual", "元気？") == "うん。元気。",
+    )
+    check(
+        "fallback:casual-activity",
+        daily_chat_fallback("casual", "何してる？") == "あなたと話している。",
+    )
+
     print()
     print("STATUS : DAILY_CONVERSATION_RUNTIME_PASS")
 
