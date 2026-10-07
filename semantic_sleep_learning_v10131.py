@@ -99,7 +99,7 @@ def _group_corpus(memory_path: Path) -> list[dict]:
             "source_files": item["sources"],
             "fingerprint": pair_fingerprint(question, answer),
             "updated_at": now,
-            "version": "v10.13.1",
+            "version": "v10.13.2",
         })
     return out
 
@@ -134,10 +134,12 @@ def ensure_corpus_memory(
     raw_corpus_path: Path,
     corpus_memory_path: Path,
 ) -> int:
-    existing = load_memory(corpus_memory_path)
-    if existing:
-        return len(existing)
+    """Rebuild derived corpus memory from the source corpus.
 
+    v10.13.2 intentionally rebuilds this derived store so changes in subject
+    canonicalization (modifier + subject -> canonical subject) are applied to
+    existing installations without requiring users to delete old JSONL files.
+    """
     text = raw_corpus_path.read_text(encoding="utf-8")
 
     class BuildArgs:
@@ -167,7 +169,6 @@ def ensure_corpus_memory(
 
     save_memory(corpus_memory_path, records)
     return len(records)
-
 
 def bootstrap_nagato_semantic_memory(
     raw_corpus_path: Path,
@@ -200,7 +201,7 @@ def bootstrap_nagato_semantic_memory(
             "source": "data-nagato-semantic-memory",
             "provenance": row["provenance"],
             "relations": row["relations"],
-            "semantic_schema": "subject-full-proposition-v10.13.1",
+            "semantic_schema": "subject-full-proposition-v10.13.2",
             "updated_at": row["updated_at"],
         }
         unified.append(unified_row)
