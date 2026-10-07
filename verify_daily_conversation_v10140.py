@@ -24,6 +24,8 @@ def main() -> None:
         "ありがとう": "acknowledgement",
         "今日はどうしようかな": "casual",
         "あなたは誰？": "persona",
+        "長門有希": "persona",
+        "元気": "casual",
     }
     for text, expected in casual.items():
         actual = classify_daily_conversation(text)
@@ -36,6 +38,8 @@ def main() -> None:
         "GPUとCPUの違い",
         "なぜGPUは高速なの",
         "Pythonの使い方",
+        "宇宙",
+        "CPU",
     )
     for text in knowledge:
         actual = classify_daily_conversation(text)
