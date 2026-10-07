@@ -2017,9 +2017,9 @@ def classify_intent_and_slots(question: str) -> tuple[str, list[str]]:
 def classify_daily_conversation(text: str) -> str:
     """Classify lightweight conversational turns that should bypass knowledge gating.
 
-    The classifier is deliberately conservative: explicit knowledge requests,
-    concept queries, comparisons, and how/why questions remain on the Semantic
-    Runtime path.
+    Explicit conversational phrases are recognized before semantic query
+    extraction.  This avoids Japanese greetings such as "こんにちは" being
+    misread as the concept query "こんにち + は".
     """
     q = text.strip()
     q_lower = q.lower()
@@ -2027,18 +2027,8 @@ def classify_daily_conversation(text: str) -> str:
     if not q:
         return ""
 
-    knowledge_markers = (
-        "とは", "について", "説明して", "説明してください", "教えて",
-        "なぜ", "どうして", "理由", "比較", "違い", "差は",
-        "使い方", "方法", "どうやって", "何ですか", "何とは",
-    )
-    if any(marker in q for marker in knowledge_markers):
-        return ""
-
-    # Explicit semantic query forms always stay on the knowledge path.
-    if extract_concept_query_focus(q):
-        return ""
-
+    # High-confidence conversational forms must be checked before the generic
+    # Japanese "Xは" concept-query extractor.
     greeting_patterns = (
         "こんにちは", "こんばんは", "おはよう", "おやすみ", "ただいま",
         "いってきます", "はじめまして", "やあ", "hello", "hi",
@@ -2074,6 +2064,18 @@ def classify_daily_conversation(text: str) -> str:
     )
     if any(x in q for x in casual_patterns):
         return "casual"
+
+    # From here onward, preserve the Semantic Runtime for knowledge requests.
+    knowledge_markers = (
+        "とは", "について", "説明して", "説明してください", "教えて",
+        "なぜ", "どうして", "理由", "比較", "違い", "差は",
+        "使い方", "方法", "どうやって", "何ですか", "何とは",
+    )
+    if any(marker in q for marker in knowledge_markers):
+        return ""
+
+    if extract_concept_query_focus(q):
+        return ""
 
     # An otherwise bare noun/token is a potential knowledge concept and must
     # keep the conservative Semantic Runtime behavior.
