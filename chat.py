@@ -3016,8 +3016,6 @@ def print_info(
         )
         print("Fallback        :", UNKNOWN_REPLY)
         print("Context policy  : minimal")
-    print("Retrieval Top-K :", args.retrieval_top_k)
-    print("Daily gen       :", args.daily_chat_generation)
         print("Teaching queue  :", args.teaching_queue)
         print("Knowledge queue :", args.knowledge_queue)
         print("Gate review q   :", args.gate_review_queue)
@@ -3034,6 +3032,8 @@ def print_info(
         if CALIBRATION_INFO.get("loaded"):
             print("Centroid source : TRAIN ONLY")
             print("Holdout in fit  :", CALIBRATION_INFO.get("holdout_used_for_centroid"))
+    print("Retrieval Top-K :", args.retrieval_top_k)
+    print("Daily gen       :", args.daily_chat_generation)
     metadata = checkpoint.get("metadata", {})
     if isinstance(metadata, dict):
         bound = metadata.get("trained_fingerprints", [])
